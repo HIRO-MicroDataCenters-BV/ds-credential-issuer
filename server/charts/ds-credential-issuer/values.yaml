@@ -1,0 +1,51 @@
+# Defaults for ds-credential-issuer. Site overrides live in ds-gitops.
+
+image:
+  repository: ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer
+  tag: "develop"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1   # single-writer against the KERI LMDB; do not scale
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  tls:
+    enabled: false
+    secretName: ""
+
+# Issuer identity + DKMS wiring. Shape mirrors app.settings.Issuer.
+issuer:
+  name: ds-credential-issuer
+  haberyPath: /var/lib/ds-credential-issuer/keystore
+  witnessUrls: []
+  witnessOobis: []
+  mesagkestoUrl: ""
+  inceptionThreshold: 1
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes: ["ReadWriteOnce"]
+  size: 1Gi
+  mountPath: /var/lib/ds-credential-issuer
+
+env:
+  DS__ENVIRONMENT: production
+  DS__LOG_LEVEL: INFO
+
+# Optional ds-auth gating — same shape as ds-policy-engine / ds-catalog.
+auth:
+  enabled: false
+  jwksUrl: ""
+  policyEngineUrl: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
