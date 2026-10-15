@@ -94,7 +94,10 @@ class AcdcIssuer:
             raise IssueError(f"KERIpy refused to mint credential: {e}") from e
 
         said = creder.said
-        acdc_dict = dict(creder.crd)  # already in canonical shape
+        # KERIpy 1.3.6: SerderACDC exposes the canonical self-addressing
+        # data dict as `.sad` (not `.crd`, which was an older alias that
+        # didn't survive the serdering refactor).
+        acdc_dict = dict(creder.sad)
 
         log.info(
             "issued ACDC: said=%s subject=%s schema=%s",

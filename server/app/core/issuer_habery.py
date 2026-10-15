@@ -80,9 +80,13 @@ def init_habery(settings: IssuerSettings) -> IssuerHandle:
     settings.habery_path.mkdir(parents=True, exist_ok=True)
 
     try:
+        # KERIpy's Habery wants `headDirPath` for an absolute storage root
+        # (what settings.habery_path is). `base` is a relative subdir name
+        # under that root — leave it empty here.
         hby = habbing.Habery(
             name=settings.name,
-            base=str(settings.habery_path),
+            base="",
+            headDirPath=str(settings.habery_path),
         )
     except Exception as e:  # KERIpy raises many kinds here
         raise HaberyError(
@@ -92,10 +96,17 @@ def init_habery(settings: IssuerSettings) -> IssuerHandle:
     hab = hby.habByName(settings.name)
     if hab is None:
         try:
+            # KERIpy's `wits` wants witness AIDs (prefixes like "Bxxx..."),
+            # not URLs. For local demo flows that don't anchor to witnesses
+            # (ds-login verifies via grant-embedded OOBIs, not via wit
+            # list), pass [] — the habitat is self-sovereign.
+            # TODO(prod): accept witness AIDs via settings and pass them
+            # here. OOBI URLs then live in settings.witness_oobis for the
+            # grant embedding path, separately from the wit list.
             hab = hby.makeHab(
                 name=settings.name,
                 transferable=True,
-                wits=settings.witness_urls,
+                wits=[],
                 isith=settings.inception_threshold,
             )
         except Exception as e:
