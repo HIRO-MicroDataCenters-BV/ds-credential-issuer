@@ -25,6 +25,12 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # The container runs as the Dockerfile's dsiss user (uid 1000). The
+      # mounted PVC comes up owned by root unless Kubernetes recursively
+      # chowns it on mount — fsGroup triggers that chown. Without this the
+      # app crashes with PermissionError: '/var/lib/ds-credential-issuer/keystore'.
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup | default 1000 }}
       containers:
         - name: server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

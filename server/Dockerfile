@@ -23,7 +23,11 @@ RUN pip install "poetry==${POETRY_VERSION}"
 
 WORKDIR /build
 COPY pyproject.toml poetry.lock* ./
-RUN poetry install --no-root --without dev,test
+# `--extras auth` pulls ds-auth from its git source so DS__AUTH__ENABLED=true
+# at runtime (the chart's default) actually has a middleware to load. Without
+# this the app refuses to start: "DS__AUTH__ENABLED=true but ds-auth is not
+# installed".
+RUN poetry install --no-root --without dev,test --extras auth
 
 COPY app ./app
 
@@ -39,18 +43,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libsodium23 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 1000 --home-dir /app --shell /usr/sbin/nologin dsiss
+    && useradd --system --uid 1000 --home-dir /code --shell /usr/sbin/nologin dsiss
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
-COPY --from=builder /build/app /app
+# Preserve the 'app' package directory so 'uvicorn app.main:app' can
+# resolve it (COPY ... /app would collapse the package contents into
+# WORKDIR itself, hiding the package). Matches the ds-login layout.
+COPY --from=builder /build/app /code/app
 
 # KERI habery LMDB lives here — mount a PVC in-cluster.
 RUN mkdir -p /var/lib/ds-credential-issuer /var/lib/ds-credential-issuer/keystore \
-    && chown -R dsiss:dsiss /app /var/lib/ds-credential-issuer
+    && chown -R dsiss:dsiss /code /var/lib/ds-credential-issuer
 
 USER dsiss
-WORKDIR /app
+WORKDIR /code
 EXPOSE 8080
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
