@@ -23,7 +23,11 @@ RUN pip install "poetry==${POETRY_VERSION}"
 
 WORKDIR /build
 COPY pyproject.toml poetry.lock* ./
-RUN poetry install --no-root --without dev,test
+# `--extras auth` pulls ds-auth from its git source so DS__AUTH__ENABLED=true
+# at runtime (the chart's default) actually has a middleware to load. Without
+# this the app refuses to start: "DS__AUTH__ENABLED=true but ds-auth is not
+# installed".
+RUN poetry install --no-root --without dev,test --extras auth
 
 COPY app ./app
 
