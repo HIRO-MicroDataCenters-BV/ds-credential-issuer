@@ -60,6 +60,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Build the versioned+SHA tag that matches every other ds-* service
+      # (e.g. ds-contract-generator:0.1.0-dev.11.develop.0cce022a).
+      # Immutable + stable, so gitops overlays can pin to it with
+      # pullPolicy: IfNotPresent and never hit ghcr's anonymous rate-limit
+      # on pod restart.
+      - name: Compute image tag
+        id: tag
+        run: |
+          APP_VERSION=$(sed -nE 's/^appVersion:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' \
+            server/charts/ds-credential-issuer/Chart.yaml)
+          BRANCH=${GITHUB_REF_NAME}
+          SHORT_SHA=${GITHUB_SHA:0:8}
+          VERSIONED="${APP_VERSION}-dev.${GITHUB_RUN_NUMBER}.${BRANCH}.${SHORT_SHA}"
+          echo "versioned=${VERSIONED}" >> "$GITHUB_OUTPUT"
+          echo "Built tag: ${VERSIONED}"
+
       - name: Build + push
         uses: docker/build-push-action@v6
         with:
@@ -69,3 +85,4 @@ jobs:
           tags: |
             ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:develop
             ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:${{ github.sha }}
+            ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:${{ steps.tag.outputs.versioned }}
