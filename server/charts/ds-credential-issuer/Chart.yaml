@@ -2,7 +2,7 @@ apiVersion: v2
 name: ds-credential-issuer
 description: Per-node ACDC credential issuer for a NextGen EU dataspace site.
 type: application
-version: 0.1.2
+version: 0.1.4
 appVersion: "0.1.0"
 keywords:
   - keri
