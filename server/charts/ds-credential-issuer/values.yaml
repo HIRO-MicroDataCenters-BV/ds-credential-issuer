@@ -46,6 +46,13 @@ auth:
   jwksUrl: ""
   policyEngineUrl: ""
 
+# Pod-level securityContext. fsGroup makes the mounted PVC writable by
+# the Dockerfile's dsiss user (uid 1000). Keep as a dict so the template
+# can safely access .podSecurityContext.fsGroup even when a site overlay
+# doesn't touch it — a missing path here nil-pointers in Helm render.
+podSecurityContext:
+  fsGroup: 1000
+
 resources: {}
 nodeSelector: {}
 tolerations: []
