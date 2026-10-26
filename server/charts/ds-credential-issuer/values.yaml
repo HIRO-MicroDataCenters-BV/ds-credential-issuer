@@ -21,11 +21,16 @@ ingress:
     secretName: ""
 
 # Issuer identity + DKMS wiring. Shape mirrors app.settings.Issuer.
+# Required: witnessAids must list the AID(s) of the configured witness(es)
+# so the issuer actually anchors there; otherwise verifiers can't resolve
+# the issuer's KEL and every grant verification fails.
 issuer:
   name: ds-credential-issuer
   haberyPath: /var/lib/ds-credential-issuer/keystore
-  witnessUrls: []
-  witnessOobis: []
+  witnessUrls: []        # internal URLs — where this pod POSTs events
+  witnessAids: []        # AIDs of those witnesses (position matches witnessUrls)
+  witnessOobiBases: []   # external bases for OOBI resolution; empty = use witnessUrls
+  witnessOobis: []       # DEPRECATED: pre-computed OOBI URLs. Prefer witnessOobiBases.
   mesagkestoUrl: ""
   inceptionThreshold: 1
 

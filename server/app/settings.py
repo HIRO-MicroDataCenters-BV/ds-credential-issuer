@@ -49,11 +49,38 @@ class Issuer(BaseModel):
         description="Base URLs for KERI witnesses this issuer anchors to",
     )
 
-    # OOBIs for those witnesses — written into every outbound IPEX grant so
-    # verifiers can reach them without prior introduction.
+    # KERI AIDs of those witnesses — KERIpy's makeHab(wits=...) wants AIDs,
+    # not URLs. Must line up positionally with witness_urls. Without this
+    # the issuer is minted self-sovereign (wits=[]) and no witness ever
+    # stores its KEL — verifiers then cannot resolve the issuer OOBI.
+    witness_aids: list[str] = Field(
+        default_factory=list,
+        description="AIDs of the witnesses the issuer anchors to",
+    )
+
+    # Externally-reachable OOBI base URLs the issuer embeds in outbound
+    # grants. If empty, the issuer computes its own OOBIs at mint time
+    # from (witness_url_external, issuer_aid) using the usual
+    # keriox /oobi/<AID> convention. Set this only when the externally-
+    # reachable OOBI base differs from the in-cluster witness_urls.
+    witness_oobi_bases: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Externally-reachable witness base URLs for OOBI resolution. "
+            "The issuer builds its own OOBI as '{base}/oobi/{issuer_aid}' "
+            "per base. If empty, falls back to witness_urls."
+        ),
+    )
+
+    # Legacy — explicit, pre-computed OOBI URLs. Only used when neither
+    # witness_oobi_bases nor the auto-compute path is viable (e.g. a
+    # custom OOBI endpoint shape).
     witness_oobis: list[str] = Field(
         default_factory=list,
-        description="OOBI URLs the issuer embeds in outbound IPEX grants",
+        description=(
+            "DEPRECATED. Explicit, pre-computed OOBI URLs. Prefer "
+            "witness_oobi_bases so the issuer AID can be auto-filled."
+        ),
     )
 
     # Mesagkesto message box used to deliver IPEX grants.
