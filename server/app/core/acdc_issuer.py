@@ -124,15 +124,18 @@ class AcdcIssuer:
         """Envelope the verifier reads.
 
         ``iss_oobis.oobi_objects`` carries the OOBI JSON objects from
-        ``dkms identifier oobi get``. Each is either a LocationScheme
-        (``eid``/``scheme``/``url`` — backer URL) or an EndRole
-        (``cid``/``role``/``eid`` — role binding). The verifier POSTs
-        them to mesagkesto's ``/resolve`` endpoint per HCF's reference
-        flow, rather than performing an HTTP GET on them.
+        ``dkms identifier oobi get`` — a LocationScheme or EndRole per
+        entry, consumed by HCF's ``mesagkesto /resolve`` endpoint.
 
-        The legacy ``witness_urls`` field is kept, now carrying the raw
-        objects as JSON strings so a transitional ds-login verifier can
-        at least echo them back for diagnostics.
+        ``iss_kel_cesr`` carries the issuer's own KEL as a CESR stream
+        (icp + witness receipts) so a KERIpy-based verifier can parse
+        it in-process without an OOBI round-trip. Verifiers that trust
+        inline KEL must still check the issuer AID against the KEL
+        root (``i`` of the icp event).
+
+        Legacy ``witness_urls`` is retained as stringified JSON of the
+        OOBI objects for one more PR, so a transitional ds-login
+        verifier can echo them back for diagnostics.
         """
         try:
             oobi_objects = self.issuer.bridge.identifier_oobi_get(self.issuer.alias)
@@ -141,17 +144,28 @@ class AcdcIssuer:
                         self.issuer.alias, e)
             oobi_objects = []
 
+        try:
+            iss_kel_cesr = self.issuer.bridge.log_kel_find(
+                self.issuer.name, self.issuer.aid,
+            )
+        except DkmsBridgeError as e:
+            log.warning("dkms log kel find %s failed: %s",
+                        self.issuer.aid, e)
+            iss_kel_cesr = ""
+
+        import json as _json
         return {
             "acdc": credential.acdc,
             "iss_sig": credential.issuer_signature_qb64,
             "iss_cesr_stream": credential.cesr_stream,
+            "iss_kel_cesr": iss_kel_cesr,
             "iss_oobis": {
                 # Phase 1 shape — JSON objects per dkms-bin.
                 "oobi_objects": oobi_objects,
                 # Legacy — kept during the migration, now stringified
                 # objects rather than URLs.
                 "witness_urls": [
-                    __import__("json").dumps(o, separators=(",", ":"))
+                    _json.dumps(o, separators=(",", ":"))
                     for o in oobi_objects
                 ],
                 "witness_aids": [],

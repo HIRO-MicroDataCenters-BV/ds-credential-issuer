@@ -188,6 +188,30 @@ class DkmsBridge:
             )
         return [dict(e) for e in parsed]
 
+    # ─── KEL lookup (verifiers consume via inline-KEL in grants) ────────
+
+    def log_kel_find(self, alias: str, identifier: str) -> str:
+        """Return the CESR stream of ``identifier``'s KEL as known to
+        ``alias``.
+
+        ``dkms log kel find`` emits the controller's own KEL (icp +
+        subsequent events, with witness receipts and signatures) as a
+        CESR stream. For an issuer embedding its own KEL in outbound
+        grants (so a verifier can parse it in-process without an OOBI
+        round-trip), pass ``identifier == self.aid``.
+        """
+        r = self._run(["log", "kel", "find", "--alias", alias,
+                       "--identifier", identifier])
+        # dkms logs noise ('Registering out of order escrow with ...')
+        # before the CESR bytes. Strip up to the first version marker.
+        start = r.stdout.find("{\"v\":")
+        if start < 0:
+            raise DkmsBridgeError(
+                f"dkms log kel find {alias}/{identifier} returned no CESR "
+                f"stream: {r.stdout[:200]!r}"
+            )
+        return r.stdout[start:].strip()
+
     # ─── credential issuance ───────────────────────────────────────────
 
     def data_issue(
