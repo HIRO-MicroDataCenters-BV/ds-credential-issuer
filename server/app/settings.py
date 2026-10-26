@@ -42,45 +42,55 @@ class Issuer(BaseModel):
         description="Where KERIpy stores the issuer's LMDB keystore and TEL",
     )
 
-    # Witnesses the issuer AID anchors to. Must be reachable from this pod
-    # so inception / rotation / interaction events can be submitted.
+    # ─── dkms-bin facade (preferred — matches HCF reference flow) ───
+    # Phase 1 of the facade pivot delegates AID lifecycle + OOBI
+    # publication + ACDC minting to the ``dkms`` CLI. The witness and
+    # watcher URLs below are what ``dkms identifier init`` POSTs the
+    # inception to and subscribes with. Only one of each per site.
+    dkms_witness_url: str = Field(
+        default="",
+        description="URL of the witness this issuer anchors to",
+    )
+    dkms_watcher_url: str = Field(
+        default="",
+        description="URL of the watcher this issuer subscribes to",
+    )
+    dkms_witness_threshold: int = Field(
+        default=1,
+        description="Minimum number of witnesses to confirm a KEL event",
+    )
+    dkms_bin: Path = Field(
+        default=Path("/usr/local/bin/dkms"),
+        description="Where the dkms CLI binary lives in the container",
+    )
+    dkms_home: Path = Field(
+        default=Path("/var/lib/ds-credential-issuer/dkms"),
+        description="Where dkms stores its state (keystore, cached KELs)",
+    )
+    # OCA bundle SAID required by ``dkms data issue -b <...>``. Credentials
+    # we mint all claim-shape against the same bundle for now; a per-schema
+    # mapping is a follow-up PR when the schema registry lands.
+    default_oca_bundle_said: str = Field(
+        default="",
+        description="OCA bundle SAID used for every ACDC we issue",
+    )
+
+    # ─── legacy KERIpy fields (deprecated, scheduled for removal) ───
     witness_urls: list[str] = Field(
         default_factory=list,
-        description="Base URLs for KERI witnesses this issuer anchors to",
+        description="DEPRECATED. Use dkms_witness_url.",
     )
-
-    # KERI AIDs of those witnesses — KERIpy's makeHab(wits=...) wants AIDs,
-    # not URLs. Must line up positionally with witness_urls. Without this
-    # the issuer is minted self-sovereign (wits=[]) and no witness ever
-    # stores its KEL — verifiers then cannot resolve the issuer OOBI.
     witness_aids: list[str] = Field(
         default_factory=list,
-        description="AIDs of the witnesses the issuer anchors to",
+        description="DEPRECATED. dkms-bin manages wits automatically.",
     )
-
-    # Externally-reachable OOBI base URLs the issuer embeds in outbound
-    # grants. If empty, the issuer computes its own OOBIs at mint time
-    # from (witness_url_external, issuer_aid) using the usual
-    # keriox /oobi/<AID> convention. Set this only when the externally-
-    # reachable OOBI base differs from the in-cluster witness_urls.
     witness_oobi_bases: list[str] = Field(
         default_factory=list,
-        description=(
-            "Externally-reachable witness base URLs for OOBI resolution. "
-            "The issuer builds its own OOBI as '{base}/oobi/{issuer_aid}' "
-            "per base. If empty, falls back to witness_urls."
-        ),
+        description="DEPRECATED. dkms-bin publishes OOBIs via the watcher.",
     )
-
-    # Legacy — explicit, pre-computed OOBI URLs. Only used when neither
-    # witness_oobi_bases nor the auto-compute path is viable (e.g. a
-    # custom OOBI endpoint shape).
     witness_oobis: list[str] = Field(
         default_factory=list,
-        description=(
-            "DEPRECATED. Explicit, pre-computed OOBI URLs. Prefer "
-            "witness_oobi_bases so the issuer AID can be auto-filled."
-        ),
+        description="DEPRECATED. See witness_oobi_bases.",
     )
 
     # Mesagkesto message box used to deliver IPEX grants.

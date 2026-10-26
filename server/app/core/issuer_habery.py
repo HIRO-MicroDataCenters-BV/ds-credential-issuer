@@ -1,152 +1,114 @@
-"""KERIpy habery / habitat wiring for ds-credential-issuer.
+"""Issuer AID lifecycle.
 
-A **habery** holds the issuer's LMDB keystore + database and manages the
-AIDs we own. A **habitat** is one AID inside that habery. ds-credential-
-issuer runs one habitat per deployment — the per-site issuer AID.
+Delegates AID enrolment, witness receipting and watcher subscription to
+HCF's ``dkms`` CLI via :mod:`.dkms_bridge`. ds-credential-issuer owns no
+KERI protocol logic of its own in Phase 1 of the facade pivot — the
+cryptographic flow is dkms-bin's, this module just records which alias
+we chose and reads back the resulting AID.
 
 Lifecycle:
-  * ``init_habery(settings)`` opens the LMDB keystore at
-    ``settings.issuer.habery_path``. On first boot it is empty; the
-    habitat ``settings.issuer.name`` is created with the configured
-    witnesses (``settings.issuer.witness_urls``) and the inception event
-    is submitted to each witness.
-  * Subsequent boots just reopen the habery and look up the existing
-    habitat; AID and keys persist across restarts.
-  * ``close()`` releases the LMDB handles.
-
-The module keeps all KERIpy imports lazy (inside functions) so the service
-can still boot on hosts where libsodium is missing (local dev on Windows);
-the actual mint path raises ``KERIpyUnavailableError`` with a clear
-diagnostic when hit.
+  * ``init_handle(settings)`` ensures the alias ``settings.name`` is
+    initialised. On first boot it shells to ``dkms identifier init``;
+    on subsequent boots it just reads the AID back via
+    ``dkms identifier info``. State lives on the service's PVC via
+    ``settings.dkms_home``.
+  * No explicit ``close()``; dkms-bin is subprocess-only and has no
+    long-lived handle for us to release.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from ..settings import Issuer as IssuerSettings
+from .dkms_bridge import DkmsBridge, DkmsBridgeError, IdentifierInfo
 
 log = logging.getLogger(__name__)
 
 
-class KERIpyUnavailableError(RuntimeError):
-    """Raised when KERIpy / libsodium cannot be loaded at runtime."""
-
-
 class HaberyError(RuntimeError):
-    """Issuer habery failed to open or no habitat could be made."""
+    """Raised when the issuer AID could not be enrolled or read back."""
 
 
 @dataclass
 class IssuerHandle:
     """Everything a request handler needs to issue a credential.
 
-    Opaque to the handler — concrete KERIpy objects live inside ``_hab``;
-    the handler only reads ``aid`` and calls ``issue()`` / ``revoke()``
-    which the ``AcdcIssuer`` wraps.
+    All KERI state lives in the dkms-bin on-disk store, keyed by alias.
+    The handler reads ``aid`` for the issuer identity string and calls
+    into ``AcdcIssuer`` which uses the shared ``DkmsBridge``.
     """
 
     aid: str
-    name: str
-    witnesses: tuple[str, ...]
-    _hab: Any  # keri.app.habbing.Hab; untyped to keep the HTTP layer importable
-    _hby: Any  # keri.app.habbing.Habery
+    alias: str
+    witness_url: str
+    watcher_url: str
+    bridge: DkmsBridge
 
 
-def init_habery(settings: IssuerSettings) -> IssuerHandle:
-    """Open (or create) the issuer's habery and return a handle.
+def init_handle(settings: IssuerSettings) -> IssuerHandle:
+    """Initialise the issuer identifier, returning a handle.
 
-    First call bootstraps:
-      * creates ``habery_path`` if missing
-      * creates a transferable habitat ``settings.name`` with the
-        configured witness set
-      * stores the resulting AID so later calls just reopen
+    First call:
+      * ensures the dkms state directory exists
+      * shells ``dkms identifier init`` which:
+        - mints the AID
+        - POSTs the inception event to ``settings.dkms_witness_url``
+          and waits for the receipt
+        - subscribes with ``settings.dkms_watcher_url``
+      * reads the resulting AID back via ``identifier info``
 
-    Raises:
-        KERIpyUnavailableError — libsodium / keri import failed
-        HaberyError — keystore open or habitat create failed
+    Subsequent calls (same PVC) just read the AID back; dkms-bin's
+    ``init`` fails on existing alias and the bridge probes with
+    ``info`` first to make the whole call idempotent.
     """
-    try:
-        from keri.app import habbing
-    except Exception as e:  # pysodium.TypeError on Windows is NOT ImportError
-        raise KERIpyUnavailableError(
-            f"KERIpy not loadable: {e}. On Windows this usually means "
-            "libsodium.dll is missing from PATH."
-        ) from e
-
-    from keri.app import habbing
-
-    settings.habery_path.mkdir(parents=True, exist_ok=True)
-
-    try:
-        # KERIpy's Habery wants `headDirPath` for an absolute storage root
-        # (what settings.habery_path is). `base` is a relative subdir name
-        # under that root — leave it empty here.
-        hby = habbing.Habery(
-            name=settings.name,
-            base="",
-            headDirPath=str(settings.habery_path),
-        )
-    except Exception as e:  # KERIpy raises many kinds here
+    if not settings.dkms_witness_url or not settings.dkms_watcher_url:
         raise HaberyError(
-            f"could not open issuer habery at {settings.habery_path}: {e}"
+            "issuer.dkms_witness_url and issuer.dkms_watcher_url must "
+            "both be set — the dkms-bin facade cannot operate self-"
+            "sovereign the way the old KERIpy path could."
+        )
+
+    try:
+        bridge = DkmsBridge(home_dir=settings.dkms_home, bin_path=settings.dkms_bin)
+    except DkmsBridgeError as e:
+        raise HaberyError(f"could not initialise DkmsBridge: {e}") from e
+
+    try:
+        info: IdentifierInfo = bridge.identifier_init(
+            alias=settings.name,
+            witness_url=settings.dkms_witness_url,
+            watcher_url=settings.dkms_watcher_url,
+            witness_threshold=settings.dkms_witness_threshold,
+        )
+    except DkmsBridgeError as e:
+        raise HaberyError(
+            f"dkms identifier init failed for alias {settings.name!r}: {e}"
         ) from e
 
-    hab = hby.habByName(settings.name)
-    if hab is None:
-        try:
-            # Anchor to the configured witnesses so verifiers can resolve
-            # the issuer's KEL. KERIpy's `wits` takes AIDs, not URLs —
-            # the two live together in settings as witness_urls (where
-            # to POST events) + witness_aids (what to list in the
-            # inception event's `b` field). Empty witness_aids = legacy
-            # self-sovereign mint; grant verification will fail against
-            # a strict verifier.
-            if not settings.witness_aids:
-                log.warning(
-                    "issuer being minted with wits=[]; no witness will "
-                    "store the issuer's KEL and verifiers that resolve "
-                    "via OOBI will fail. Set issuer.witness_aids."
-                )
-            hab = hby.makeHab(
-                name=settings.name,
-                transferable=True,
-                wits=list(settings.witness_aids),
-                toad=max(1, len(settings.witness_aids))
-                    if settings.witness_aids else 0,
-                isith=settings.inception_threshold,
-            )
-        except Exception as e:
-            hby.close()
-            raise HaberyError(
-                f"could not create habitat {settings.name!r}: {e}"
-            ) from e
-
-        log.info(
-            "issuer habitat %r created: aid=%s witness_aids=%s witness_urls=%s",
-            settings.name, hab.pre,
-            list(settings.witness_aids),
-            list(settings.witness_urls),
-        )
-    else:
-        log.info(
-            "issuer habitat %r reopened: aid=%s",
-            settings.name, hab.pre,
-        )
+    log.info(
+        "issuer identifier ready: alias=%s aid=%s witness=%s watcher=%s",
+        info.alias, info.aid,
+        settings.dkms_witness_url, settings.dkms_watcher_url,
+    )
 
     return IssuerHandle(
-        aid=hab.pre,
-        name=settings.name,
-        witnesses=tuple(settings.witness_urls),
-        _hab=hab,
-        _hby=hby,
+        aid=info.aid,
+        alias=info.alias,
+        witness_url=settings.dkms_witness_url,
+        watcher_url=settings.dkms_watcher_url,
+        bridge=bridge,
     )
 
 
+# Backward-compat alias — several callers were importing the old name.
+init_habery = init_handle
+
+
 def close_habery(handle: IssuerHandle) -> None:
-    """Release LMDB handles. Safe to call multiple times."""
-    try:
-        handle._hby.close()
-    except Exception:
-        log.exception("habery close failed")
+    """No-op in the dkms-bin world — no long-lived handle to release.
+
+    Kept so ``main.py`` lifespan code can still call it; drop once
+    callers are updated.
+    """
+    _ = handle  # intentional

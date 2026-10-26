@@ -16,7 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...core.acdc_issuer import AcdcIssuer, IssueError
-from ...core.issuer_habery import KERIpyUnavailableError
+from ...core.dkms_bridge import DkmsBridgeError
 from ..api_models import (
     CredentialSummary,
     IssueCredentialRequest,
@@ -42,7 +42,7 @@ def issue_credential(
             schema_said=body.schema_said,
             attributes=body.attributes,
         )
-    except KERIpyUnavailableError as e:
+    except DkmsBridgeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except IssueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

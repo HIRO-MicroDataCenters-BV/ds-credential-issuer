@@ -45,6 +45,19 @@ spec:
               value: {{ .Values.issuer.name | quote }}
             - name: DS__ISSUER__HABERY_PATH
               value: {{ .Values.issuer.haberyPath | quote }}
+            # dkms-bin facade (Phase 1) ---------------------------------
+            - name: DS__ISSUER__DKMS_WITNESS_URL
+              value: {{ .Values.issuer.dkmsWitnessUrl | quote }}
+            - name: DS__ISSUER__DKMS_WATCHER_URL
+              value: {{ .Values.issuer.dkmsWatcherUrl | quote }}
+            - name: DS__ISSUER__DKMS_WITNESS_THRESHOLD
+              value: {{ .Values.issuer.dkmsWitnessThreshold | quote }}
+            - name: DS__ISSUER__DKMS_HOME
+              value: {{ .Values.issuer.dkmsHome | quote }}
+            - name: DS__ISSUER__DEFAULT_OCA_BUNDLE_SAID
+              value: {{ .Values.issuer.defaultOcaBundleSaid | quote }}
+            # Legacy KERIpy settings — kept for backward-compat during the
+            # migration; the dkms-bin path above overrides their behaviour.
             - name: DS__ISSUER__WITNESS_URLS
               value: {{ toJson .Values.issuer.witnessUrls | quote }}
             - name: DS__ISSUER__WITNESS_AIDS
