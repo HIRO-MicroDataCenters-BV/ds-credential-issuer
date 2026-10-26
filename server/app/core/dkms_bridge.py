@@ -157,48 +157,88 @@ class DkmsBridge:
             return None
         return _parse_identifier_info(alias, r.stdout)
 
-    def identifier_oobi_get(self, alias: str) -> list[str]:
-        """Return the OOBI URLs ``alias`` is served at.
+    def identifier_oobi_get(self, alias: str) -> list[dict[str, Any]]:
+        """Return the OOBI JSON objects ``alias`` is served at.
 
-        ``dkms identifier oobi get`` prints a JSON array of URLs — the
-        watcher-served OOBIs (not witness) are what verifiers consume.
+        ``dkms identifier oobi get`` prints assorted log lines followed
+        by a JSON ARRAY of OOBI objects. Each element is a dict — one
+        shape is a ``LocationScheme`` (``eid``/``scheme``/``url``) for
+        a backer, another is an ``EndRole`` (``cid``/``role``/``eid``)
+        for a role binding. The verifier POSTs these verbatim to
+        mesagkesto's ``/resolve`` endpoint per the HCF reference flow.
         """
         r = self._run(["identifier", "oobi", "get", "-a", alias])
+        raw = r.stdout
+        start = raw.find("[")
+        if start < 0:
+            raise DkmsBridgeError(
+                f"dkms identifier oobi get {alias} returned no JSON array: {raw!r}"
+            )
         try:
-            parsed = json.loads(r.stdout)
+            parsed = json.loads(raw[start:])
         except json.JSONDecodeError as e:
             raise DkmsBridgeError(
                 f"dkms identifier oobi get {alias} returned non-JSON "
-                f"output: {r.stdout!r}"
+                f"output: {raw!r}"
             ) from e
         if not isinstance(parsed, list):
             raise DkmsBridgeError(
                 f"dkms identifier oobi get {alias} returned {type(parsed).__name__}, "
                 "expected list"
             )
-        return [str(u) for u in parsed]
+        return [dict(e) for e in parsed]
+
+    # ─── KEL lookup (verifiers consume via inline-KEL in grants) ────────
+
+    def log_kel_find(self, alias: str, identifier: str) -> str:
+        """Return the CESR stream of ``identifier``'s KEL as known to
+        ``alias``.
+
+        ``dkms log kel find`` emits the controller's own KEL (icp +
+        subsequent events, with witness receipts and signatures) as a
+        CESR stream. For an issuer embedding its own KEL in outbound
+        grants (so a verifier can parse it in-process without an OOBI
+        round-trip), pass ``identifier == self.aid``.
+        """
+        r = self._run(["log", "kel", "find", "--alias", alias,
+                       "--identifier", identifier])
+        # dkms logs noise ('Registering out of order escrow with ...')
+        # before the CESR bytes. Strip up to the first version marker.
+        start = r.stdout.find("{\"v\":")
+        if start < 0:
+            raise DkmsBridgeError(
+                f"dkms log kel find {alias}/{identifier} returned no CESR "
+                f"stream: {r.stdout[:200]!r}"
+            )
+        return r.stdout[start:].strip()
 
     # ─── credential issuance ───────────────────────────────────────────
 
     def data_issue(
         self,
         alias: str,
-        acdc_json: dict[str, Any],
+        attributes: dict[str, Any],
         oca_bundle_said: str,
         prepend_oobis: bool = True,
     ) -> str:
-        """Issue (sign) an ACDC with ``alias``. Returns the CESR stream.
+        """Issue an ACDC with ``alias``. Returns the raw stdout CESR stream.
 
-        The input ACDC is a JSON dict in the HCF reference shape:
-            {"v": "ACDC10JSON...", "d": "", "i": issuer_aid, "ri": "",
-             "s": schema_said, "a": {"d": "", "a": {<claims>}}}
-        The ``d`` and ``a.d`` SAIDs are left blank — dkms-bin computes
-        and backfills them.
+        ``attributes`` is the user-facing claims dict (plus any protocol
+        bindings — e.g. ``i`` for the subject AID). dkms-bin wraps it as
+        ``acdc.a.a`` and builds the full ACDC envelope itself (issuer AID
+        from the alias, schema SAID from the OCA bundle, ``d`` SAIDs
+        backfilled). We previously handed dkms-bin a full ACDC skeleton
+        as ``-m``, which dkms treated as the attributes payload and
+        nested a level too deep.
+
+        ``dkms data issue`` emits the ACDC body only — no signature
+        attachment. :meth:`data_sign` is called separately once the
+        ACDC body is known.
         """
         args = [
             "data", "issue",
             "-a", alias,
-            "-m", json.dumps(acdc_json, separators=(",", ":"), sort_keys=False),
+            "-m", json.dumps(attributes, separators=(",", ":"), sort_keys=False),
             "-b", oca_bundle_said,
         ]
         if prepend_oobis:
@@ -206,13 +246,43 @@ class DkmsBridge:
         r = self._run(args)
         return r.stdout.strip()
 
+    def data_sign(self, alias: str, message: bytes | str) -> str:
+        """Sign arbitrary bytes with ``alias``'s current signing key.
+
+        ``dkms data sign`` returns a CESR stream — the message followed
+        by a signature attachment. We feed it the canonical ACDC body
+        we just received from :meth:`data_issue` and extract the qb64
+        signature so the verifier can check it against the issuer's
+        current key in the resolved KEL.
+        """
+        if isinstance(message, bytes):
+            message = message.decode("utf-8")
+        r = self._run([
+            "data", "sign",
+            "-a", alias,
+            "-m", message,
+        ])
+        return r.stdout
+
 
 # ─── helpers ───────────────────────────────────────────────────────────
 
 
 def _parse_identifier_info(alias: str, raw: str) -> IdentifierInfo:
+    """Pull the JSON object out of dkms' stdout.
+
+    dkms prints assorted non-JSON log lines (``Registering out of order
+    escrow with timeout: 60s``, etc.) BEFORE the JSON payload. We locate
+    the first ``{`` and parse from there, which also tolerates whatever
+    future log noise dkms adds.
+    """
+    start = raw.find("{")
+    if start < 0:
+        raise DkmsBridgeError(
+            f"dkms identifier info {alias} returned no JSON object: {raw!r}"
+        )
     try:
-        data = json.loads(raw)
+        data = json.loads(raw[start:])
     except json.JSONDecodeError as e:
         raise DkmsBridgeError(
             f"dkms identifier info {alias} returned non-JSON: {raw!r}"
