@@ -3,16 +3,24 @@
 Delegates mint to HCF's ``dkms data issue`` via :mod:`.dkms_bridge`;
 builds the IPEX grant envelope that ds-login's ``AcdcVerifier`` reads.
 
-The ACDC JSON we hand to dkms-bin is in the HCF reference shape — claims
-nested under ``a.a``, inner ``a.d`` left blank for dkms-bin to backfill.
-On the ds-login side the verifier must accept both this and the KERIpy
-``.a``-flat shape (see Rahul audit #8 follow-up).
+Mint is a two-step dance against dkms-bin v0.8.2:
 
-Phase 1 of the facade pivot: ``issue()`` returns the signed CESR stream
-from dkms-bin alongside the ACDC body; ``wrap_as_grant()`` carries the
-watcher-served OOBI URLs that ``dkms identifier oobi get`` emits. TEL
-registry work (``ri`` / ``registry_said``) and full IPEX ``exn`` wrapping
-remain follow-up PRs.
+  1. ``dkms data issue -a <alias> -m <attrs>`` — dkms builds the ACDC
+     envelope itself (issuer AID from the alias, schema SAID from the
+     OCA bundle, ``d`` SAIDs backfilled). ``attrs`` is the user-facing
+     claims dict PLUS the subject binding ``"i": subject_aid``. dkms
+     wraps that whole dict as ``acdc.a.a``. The command emits the ACDC
+     body only — no signature.
+  2. ``dkms data sign -a <alias> -m <canonical acdc body>`` — produces
+     the issuer signature CESR stream. We extract the qb64 signature
+     and ship it as ``grant.iss_sig``.
+
+ds-login's verifier reads subject + claims from ``acdc.a.a.*`` (HCF
+nesting) with a fallback to the KERIpy flat ``acdc.a.*`` shape so the
+old test fixtures still work.
+
+Phase 1 of the facade pivot. TEL registry work (``ri`` / ``registry_said``)
+and full IPEX ``exn`` wrapping remain follow-up PRs.
 """
 from __future__ import annotations
 
@@ -59,11 +67,15 @@ class AcdcIssuer:
     def issue(
         self,
         subject_aid: str,
-        schema_said: str,
+        schema_said: str,  # noqa: ARG002 — dkms derives schema from the OCA bundle
         attributes: dict[str, Any],
         oca_bundle_said: str | None = None,
     ) -> IssuedCredential:
-        """Mint an ACDC bound to ``subject_aid`` via ``dkms data issue``."""
+        """Mint an ACDC bound to ``subject_aid`` via ``dkms data issue``.
+
+        Two-step mint: ``data issue`` emits the ACDC body (no sig);
+        ``data sign`` produces the issuer signature over that body.
+        """
         bundle = oca_bundle_said or self.issuer_settings.default_oca_bundle_said
         if not bundle:
             raise IssueError(
@@ -71,22 +83,14 @@ class AcdcIssuer:
                 "pass oca_bundle_said per call"
             )
 
-        acdc = {
-            "v": "ACDC10JSON000114_",
-            "d": "",
-            "i": self.issuer.aid,
-            "ri": "",
-            "s": schema_said,
-            "a": {
-                "d": "",
-                "a": dict(attributes),
-            },
-        }
+        # Subject binding goes in the attribute dict as `i`; dkms wraps
+        # the whole dict as `acdc.a.a` so this ends up at `acdc.a.a.i`.
+        payload = {"i": subject_aid, **dict(attributes)}
 
         try:
             cesr_stream = self.issuer.bridge.data_issue(
                 alias=self.issuer.alias,
-                acdc_json=acdc,
+                attributes=payload,
                 oca_bundle_said=bundle,
                 prepend_oobis=True,
             )
@@ -100,16 +104,32 @@ class AcdcIssuer:
                 f"dkms data issue returned an ACDC with no SAID (`d` empty): {parsed.acdc!r}"
             )
 
+        # Sign the canonical ACDC body — the exact bytes the verifier will
+        # re-serialize when checking the signature. dkms data issue emits
+        # no sig of its own; this fills grant.iss_sig.
+        acdc_body = parsed.acdc_bytes
+        try:
+            sign_output = self.issuer.bridge.data_sign(
+                alias=self.issuer.alias, message=acdc_body,
+            )
+        except DkmsBridgeError as e:
+            raise IssueError(f"dkms data sign failed: {e}") from e
+        issuer_signature_qb64 = _extract_signature_qb64_from_sign(sign_output)
+        if not issuer_signature_qb64:
+            raise IssueError(
+                f"dkms data sign returned no qb64 signature; output={sign_output[:200]!r}"
+            )
+
         log.info(
-            "issued ACDC via dkms: said=%s subject=%s schema=%s",
-            said, subject_aid, schema_said,
+            "issued ACDC via dkms: said=%s subject=%s sig=%s…",
+            said, subject_aid, issuer_signature_qb64[:16],
         )
 
         return IssuedCredential(
             said=said,
             acdc=parsed.acdc,
             cesr_stream=cesr_stream,
-            issuer_signature_qb64=parsed.signature_qb64,
+            issuer_signature_qb64=issuer_signature_qb64,
             subject_aid=subject_aid,
             issuer_aid=self.issuer.aid,
         )
@@ -181,23 +201,32 @@ class AcdcIssuer:
 @dataclass
 class _DkmsIssueParsed:
     acdc: dict[str, Any]
-    signature_qb64: str
+    acdc_bytes: bytes
+    """Exact bytes of the ACDC body, as they appeared in dkms' stdout.
+
+    These are the bytes we hand to :meth:`DkmsBridge.data_sign` so the
+    signature is over the same byte string the verifier canonicalises
+    from the parsed JSON — otherwise byte-level JSON drift (key order,
+    whitespace, number formatting) silently invalidates every grant.
+    """
 
 
 _VERSION_RE = re.compile(rb'"v":"(?P<proto>ACDC|KERI)1[0-9]JSON(?P<size>[0-9a-f]{6})_"')
 
 
 def _parse_dkms_issue_output(cesr_stream: str) -> _DkmsIssueParsed:
-    """Pull the JSON ACDC body + the qb64 signature out of dkms' stdout.
+    """Pull the JSON ACDC body out of ``dkms data issue`` stdout.
 
-    ``dkms data issue -o`` emits a CESR stream that looks like::
+    ``dkms data issue -o`` emits::
 
-        <OOBIs (optional, when -o is passed)>
-        {"v":"ACDC10JSON000...", ...}-FABE...-0AA...<sigs>...
+        <log noise>
+        <OOBI JSON objects, one per line>
+        {"v":"ACDC10JSON000...", ...<rest of ACDC body>}
 
-    The JSON body is self-delimiting via its ``v`` header (``v`` carries
-    the exact byte length), so we can split on it without touching the
-    trailing CESR attachments.
+    The ACDC body is self-delimiting via its ``v`` header (the size field
+    is the exact byte count), so we locate the version marker and read
+    exactly that many bytes. ``data issue`` emits NO signature — that's
+    what ``data sign`` is for.
     """
     raw = cesr_stream.encode("utf-8") if isinstance(cesr_stream, str) else cesr_stream
     m = _VERSION_RE.search(raw)
@@ -220,15 +249,46 @@ def _parse_dkms_issue_output(cesr_stream: str) -> _DkmsIssueParsed:
             f"could not parse ACDC JSON out of dkms output: {e}; body={body_bytes[:200]!r}"
         ) from e
 
-    tail = raw[start + size:].decode("utf-8", errors="replace")
-    sig = _extract_signature_qb64(tail)
-    return _DkmsIssueParsed(acdc=acdc, signature_qb64=sig)
+    return _DkmsIssueParsed(acdc=acdc, acdc_bytes=body_bytes)
+
+
+def _extract_signature_qb64_from_sign(output: str) -> str:
+    """Pull the first qb64 signature out of ``dkms data sign`` stdout.
+
+    ``dkms data sign`` echoes the message bytes then appends CESR
+    attachments. The attachments carry either an indexed sig (prefix
+    ``-AAB`` / ``-AAC``, 88-char body) or an unindexed Ed25519 sig
+    (code ``0B`` or ``0A``, 88 chars total including the 2-char code).
+
+    Returns an empty string if neither shape is found — callers raise
+    an IssueError so the mint fails loudly rather than ship an empty
+    ``iss_sig`` that would cost a verifier-side debugging session.
+    """
+    # Indexed-sig CESR attachment first (what KERIpy expects for KEL events).
+    for marker in ("-AAB", "-AAC"):
+        i = output.find(marker)
+        if i >= 0:
+            # 4-char attachment code + 88-char Ed25519 sig body.
+            chunk = output[i:i + 4 + 88]
+            if len(chunk) == 4 + 88:
+                return chunk
+    # Unindexed Ed25519 (bare qb64 sig, 88 chars including the 2-char code).
+    for marker in ("0B", "0A"):
+        i = output.find(marker)
+        while i >= 0:
+            # Reject digits-prefixed hits (ACDC sizes, byte counts, etc.) —
+            # a real qb64 sig code is at a word boundary.
+            prev = output[i - 1] if i > 0 else ""
+            if not (prev.isalnum() or prev in "_-"):
+                return output[i:i + 88]
+            i = output.find(marker, i + 1)
+    return ""
 
 
 def _extract_signature_qb64(tail: str) -> str:
-    """Pull the first ``-AAB`` / ``-AAC`` indexed-sig attachment out of the
-    CESR tail. Falls back to an empty string so a packaging bug surfaces
-    as a verify-side failure rather than a mint-side crash.
+    """Legacy name kept for any external callers.
+
+    Delegates to :func:`_extract_signature_qb64_from_sign`.
     """
     i = tail.find("-AAB")
     if i < 0:

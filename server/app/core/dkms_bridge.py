@@ -217,28 +217,52 @@ class DkmsBridge:
     def data_issue(
         self,
         alias: str,
-        acdc_json: dict[str, Any],
+        attributes: dict[str, Any],
         oca_bundle_said: str,
         prepend_oobis: bool = True,
     ) -> str:
-        """Issue (sign) an ACDC with ``alias``. Returns the CESR stream.
+        """Issue an ACDC with ``alias``. Returns the raw stdout CESR stream.
 
-        The input ACDC is a JSON dict in the HCF reference shape:
-            {"v": "ACDC10JSON...", "d": "", "i": issuer_aid, "ri": "",
-             "s": schema_said, "a": {"d": "", "a": {<claims>}}}
-        The ``d`` and ``a.d`` SAIDs are left blank — dkms-bin computes
-        and backfills them.
+        ``attributes`` is the user-facing claims dict (plus any protocol
+        bindings — e.g. ``i`` for the subject AID). dkms-bin wraps it as
+        ``acdc.a.a`` and builds the full ACDC envelope itself (issuer AID
+        from the alias, schema SAID from the OCA bundle, ``d`` SAIDs
+        backfilled). We previously handed dkms-bin a full ACDC skeleton
+        as ``-m``, which dkms treated as the attributes payload and
+        nested a level too deep.
+
+        ``dkms data issue`` emits the ACDC body only — no signature
+        attachment. :meth:`data_sign` is called separately once the
+        ACDC body is known.
         """
         args = [
             "data", "issue",
             "-a", alias,
-            "-m", json.dumps(acdc_json, separators=(",", ":"), sort_keys=False),
+            "-m", json.dumps(attributes, separators=(",", ":"), sort_keys=False),
             "-b", oca_bundle_said,
         ]
         if prepend_oobis:
             args.append("-o")
         r = self._run(args)
         return r.stdout.strip()
+
+    def data_sign(self, alias: str, message: bytes | str) -> str:
+        """Sign arbitrary bytes with ``alias``'s current signing key.
+
+        ``dkms data sign`` returns a CESR stream — the message followed
+        by a signature attachment. We feed it the canonical ACDC body
+        we just received from :meth:`data_issue` and extract the qb64
+        signature so the verifier can check it against the issuer's
+        current key in the resolved KEL.
+        """
+        if isinstance(message, bytes):
+            message = message.decode("utf-8")
+        r = self._run([
+            "data", "sign",
+            "-a", alias,
+            "-m", message,
+        ])
+        return r.stdout
 
 
 # ─── helpers ───────────────────────────────────────────────────────────
