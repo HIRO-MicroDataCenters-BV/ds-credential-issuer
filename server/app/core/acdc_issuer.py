@@ -123,24 +123,38 @@ class AcdcIssuer:
     ) -> dict[str, Any]:
         """Envelope the verifier reads.
 
-        ``iss_oobis.witness_urls`` carries the watcher-served OOBI URLs
-        from ``dkms identifier oobi get`` — those resolve to the ISSUER's
-        KEL on a watcher the issuer subscribed with at init time.
+        ``iss_oobis.oobi_objects`` carries the OOBI JSON objects from
+        ``dkms identifier oobi get``. Each is either a LocationScheme
+        (``eid``/``scheme``/``url`` — backer URL) or an EndRole
+        (``cid``/``role``/``eid`` — role binding). The verifier POSTs
+        them to mesagkesto's ``/resolve`` endpoint per HCF's reference
+        flow, rather than performing an HTTP GET on them.
+
+        The legacy ``witness_urls`` field is kept, now carrying the raw
+        objects as JSON strings so a transitional ds-login verifier can
+        at least echo them back for diagnostics.
         """
         try:
-            oobis = self.issuer.bridge.identifier_oobi_get(self.issuer.alias)
+            oobi_objects = self.issuer.bridge.identifier_oobi_get(self.issuer.alias)
         except DkmsBridgeError as e:
             log.warning("dkms identifier oobi get %r failed: %s",
                         self.issuer.alias, e)
-            oobis = []
+            oobi_objects = []
 
         return {
             "acdc": credential.acdc,
             "iss_sig": credential.issuer_signature_qb64,
             "iss_cesr_stream": credential.cesr_stream,
             "iss_oobis": {
-                "witness_urls": oobis,
-                "witness_aids": [],  # dkms-bin keeps those internal
+                # Phase 1 shape — JSON objects per dkms-bin.
+                "oobi_objects": oobi_objects,
+                # Legacy — kept during the migration, now stringified
+                # objects rather than URLs.
+                "witness_urls": [
+                    __import__("json").dumps(o, separators=(",", ":"))
+                    for o in oobi_objects
+                ],
+                "witness_aids": [],
                 "registry_said": registry_said,
                 "tel_witness_urls": [self.issuer.watcher_url],
             },

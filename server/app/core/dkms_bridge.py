@@ -157,26 +157,36 @@ class DkmsBridge:
             return None
         return _parse_identifier_info(alias, r.stdout)
 
-    def identifier_oobi_get(self, alias: str) -> list[str]:
-        """Return the OOBI URLs ``alias`` is served at.
+    def identifier_oobi_get(self, alias: str) -> list[dict[str, Any]]:
+        """Return the OOBI JSON objects ``alias`` is served at.
 
-        ``dkms identifier oobi get`` prints a JSON array of URLs — the
-        watcher-served OOBIs (not witness) are what verifiers consume.
+        ``dkms identifier oobi get`` prints assorted log lines followed
+        by a JSON ARRAY of OOBI objects. Each element is a dict — one
+        shape is a ``LocationScheme`` (``eid``/``scheme``/``url``) for
+        a backer, another is an ``EndRole`` (``cid``/``role``/``eid``)
+        for a role binding. The verifier POSTs these verbatim to
+        mesagkesto's ``/resolve`` endpoint per the HCF reference flow.
         """
         r = self._run(["identifier", "oobi", "get", "-a", alias])
+        raw = r.stdout
+        start = raw.find("[")
+        if start < 0:
+            raise DkmsBridgeError(
+                f"dkms identifier oobi get {alias} returned no JSON array: {raw!r}"
+            )
         try:
-            parsed = json.loads(r.stdout)
+            parsed = json.loads(raw[start:])
         except json.JSONDecodeError as e:
             raise DkmsBridgeError(
                 f"dkms identifier oobi get {alias} returned non-JSON "
-                f"output: {r.stdout!r}"
+                f"output: {raw!r}"
             ) from e
         if not isinstance(parsed, list):
             raise DkmsBridgeError(
                 f"dkms identifier oobi get {alias} returned {type(parsed).__name__}, "
                 "expected list"
             )
-        return [str(u) for u in parsed]
+        return [dict(e) for e in parsed]
 
     # ─── credential issuance ───────────────────────────────────────────
 
@@ -211,8 +221,20 @@ class DkmsBridge:
 
 
 def _parse_identifier_info(alias: str, raw: str) -> IdentifierInfo:
+    """Pull the JSON object out of dkms' stdout.
+
+    dkms prints assorted non-JSON log lines (``Registering out of order
+    escrow with timeout: 60s``, etc.) BEFORE the JSON payload. We locate
+    the first ``{`` and parse from there, which also tolerates whatever
+    future log noise dkms adds.
+    """
+    start = raw.find("{")
+    if start < 0:
+        raise DkmsBridgeError(
+            f"dkms identifier info {alias} returned no JSON object: {raw!r}"
+        )
     try:
-        data = json.loads(raw)
+        data = json.loads(raw[start:])
     except json.JSONDecodeError as e:
         raise DkmsBridgeError(
             f"dkms identifier info {alias} returned non-JSON: {raw!r}"
