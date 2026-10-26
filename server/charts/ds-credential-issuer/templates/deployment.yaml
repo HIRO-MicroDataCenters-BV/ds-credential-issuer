@@ -47,6 +47,10 @@ spec:
               value: {{ .Values.issuer.haberyPath | quote }}
             - name: DS__ISSUER__WITNESS_URLS
               value: {{ toJson .Values.issuer.witnessUrls | quote }}
+            - name: DS__ISSUER__WITNESS_AIDS
+              value: {{ toJson .Values.issuer.witnessAids | quote }}
+            - name: DS__ISSUER__WITNESS_OOBI_BASES
+              value: {{ toJson .Values.issuer.witnessOobiBases | quote }}
             - name: DS__ISSUER__WITNESS_OOBIS
               value: {{ toJson .Values.issuer.witnessOobis | quote }}
             - name: DS__ISSUER__MESAGKESTO_URL

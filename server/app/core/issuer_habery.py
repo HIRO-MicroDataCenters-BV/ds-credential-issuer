@@ -96,17 +96,25 @@ def init_habery(settings: IssuerSettings) -> IssuerHandle:
     hab = hby.habByName(settings.name)
     if hab is None:
         try:
-            # KERIpy's `wits` wants witness AIDs (prefixes like "Bxxx..."),
-            # not URLs. For local demo flows that don't anchor to witnesses
-            # (ds-login verifies via grant-embedded OOBIs, not via wit
-            # list), pass [] — the habitat is self-sovereign.
-            # TODO(prod): accept witness AIDs via settings and pass them
-            # here. OOBI URLs then live in settings.witness_oobis for the
-            # grant embedding path, separately from the wit list.
+            # Anchor to the configured witnesses so verifiers can resolve
+            # the issuer's KEL. KERIpy's `wits` takes AIDs, not URLs —
+            # the two live together in settings as witness_urls (where
+            # to POST events) + witness_aids (what to list in the
+            # inception event's `b` field). Empty witness_aids = legacy
+            # self-sovereign mint; grant verification will fail against
+            # a strict verifier.
+            if not settings.witness_aids:
+                log.warning(
+                    "issuer being minted with wits=[]; no witness will "
+                    "store the issuer's KEL and verifiers that resolve "
+                    "via OOBI will fail. Set issuer.witness_aids."
+                )
             hab = hby.makeHab(
                 name=settings.name,
                 transferable=True,
-                wits=[],
+                wits=list(settings.witness_aids),
+                toad=max(1, len(settings.witness_aids))
+                    if settings.witness_aids else 0,
                 isith=settings.inception_threshold,
             )
         except Exception as e:
@@ -116,8 +124,10 @@ def init_habery(settings: IssuerSettings) -> IssuerHandle:
             ) from e
 
         log.info(
-            "issuer habitat %r created: aid=%s witnesses=%s",
-            settings.name, hab.pre, settings.witness_urls,
+            "issuer habitat %r created: aid=%s witness_aids=%s witness_urls=%s",
+            settings.name, hab.pre,
+            list(settings.witness_aids),
+            list(settings.witness_urls),
         )
     else:
         log.info(
