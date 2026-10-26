@@ -34,16 +34,22 @@ class HaberyError(RuntimeError):
 class IssuerHandle:
     """Everything a request handler needs to issue a credential.
 
-    All KERI state lives in the dkms-bin on-disk store, keyed by alias.
-    The handler reads ``aid`` for the issuer identity string and calls
-    into ``AcdcIssuer`` which uses the shared ``DkmsBridge``.
+    All KERI state lives in the dkms-bin on-disk store, keyed by
+    ``name`` (the dkms alias). The handler reads ``aid`` for the
+    issuer identity string and calls into ``AcdcIssuer`` which uses
+    the shared ``DkmsBridge``.
     """
 
     aid: str
-    alias: str
+    name: str  # dkms-bin alias
     witness_url: str
     watcher_url: str
     bridge: DkmsBridge
+
+    @property
+    def alias(self) -> str:
+        """Backward-compat alias for ``name``."""
+        return self.name
 
 
 def init_handle(settings: IssuerSettings) -> IssuerHandle:
@@ -94,7 +100,7 @@ def init_handle(settings: IssuerSettings) -> IssuerHandle:
 
     return IssuerHandle(
         aid=info.aid,
-        alias=info.alias,
+        name=info.alias,
         witness_url=settings.dkms_witness_url,
         watcher_url=settings.dkms_watcher_url,
         bridge=bridge,
