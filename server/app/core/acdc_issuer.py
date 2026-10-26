@@ -121,17 +121,37 @@ class AcdcIssuer:
     ) -> dict[str, Any]:
         """Produce the JSON grant envelope that ds-login's verifier reads.
 
-        Shape intentionally matches ``ds-login/app/core/ipex_grant.py``.
-        Full IPEX ``exn`` wrapping (so a wallet can forward the grant to
-        a verifier via mesagkesto) is a follow-up PR.
+        ``iss_oobis.witness_urls`` carries URLs that resolve the ISSUER's
+        own KEL (shape ``{witness_base}/oobi/{issuer_aid}``), not the
+        witness's own OOBI. The verifier fetches those URLs, parses the
+        CESR stream and extracts the issuer's current signing key — so
+        they must point at the issuer, not at the witness.
         """
+        issuer_oobis = self._issuer_oobi_urls()
         return {
             "acdc": credential.acdc,
             "iss_sig": credential.issuer_signature_qb64,
             "iss_oobis": {
-                "witness_urls": list(self.issuer_settings.witness_oobis),
-                "witness_aids": [],  # populated when we parse the AIDs out of OOBIs
+                "witness_urls": issuer_oobis,
+                "witness_aids": list(self.issuer_settings.witness_aids),
                 "registry_said": registry_said,
                 "tel_witness_urls": list(self.issuer_settings.witness_urls),
             },
         }
+
+    def _issuer_oobi_urls(self) -> list[str]:
+        """Compute OOBI URLs that resolve to the ISSUER's KEL.
+
+        Resolution order:
+          1. Explicit ``witness_oobis`` (legacy; usually pre-computed).
+          2. ``{witness_oobi_bases[i]}/oobi/{issuer_aid}``
+             (externally-reachable base per witness, if configured).
+          3. ``{witness_urls[i]}/oobi/{issuer_aid}``
+             (fallback to in-cluster witness URLs — only reachable from
+             inside the cluster, which is fine for intra-site verifiers).
+        """
+        s = self.issuer_settings
+        if s.witness_oobis:
+            return list(s.witness_oobis)
+        bases = list(s.witness_oobi_bases) or list(s.witness_urls)
+        return [f"{base.rstrip('/')}/oobi/{self.issuer.aid}" for base in bases]
