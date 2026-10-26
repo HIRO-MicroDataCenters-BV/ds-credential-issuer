@@ -21,18 +21,26 @@ ingress:
     secretName: ""
 
 # Issuer identity + DKMS wiring. Shape mirrors app.settings.Issuer.
-# Required: witnessAids must list the AID(s) of the configured witness(es)
-# so the issuer actually anchors there; otherwise verifiers can't resolve
-# the issuer's KEL and every grant verification fails.
+# Phase 1 of the facade pivot delegates AID lifecycle + grant OOBI
+# publication + ACDC minting to HCF's `dkms` CLI (baked into the image).
+# dkmsWitnessUrl and dkmsWatcherUrl must point at this site's keriox
+# witness/watcher Services; dkms-bin takes care of inception, witness
+# receipting and watcher subscription on first boot.
 issuer:
   name: ds-credential-issuer
-  haberyPath: /var/lib/ds-credential-issuer/keystore
-  witnessUrls: []        # internal URLs — where this pod POSTs events
-  witnessAids: []        # AIDs of those witnesses (position matches witnessUrls)
-  witnessOobiBases: []   # external bases for OOBI resolution; empty = use witnessUrls
-  witnessOobis: []       # DEPRECATED: pre-computed OOBI URLs. Prefer witnessOobiBases.
+  haberyPath: /var/lib/ds-credential-issuer/keystore  # kept for backward-compat; unused in facade path
+  dkmsWitnessUrl: ""
+  dkmsWatcherUrl: ""
+  dkmsWitnessThreshold: 1
+  dkmsHome: /var/lib/ds-credential-issuer/dkms
+  defaultOcaBundleSaid: ""
   mesagkestoUrl: ""
   inceptionThreshold: 1
+  # ─── DEPRECATED (previous KERIpy path) ─────────────────────────────
+  witnessUrls: []
+  witnessAids: []
+  witnessOobiBases: []
+  witnessOobis: []
 
 persistence:
   enabled: true

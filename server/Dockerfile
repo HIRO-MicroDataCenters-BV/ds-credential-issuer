@@ -39,10 +39,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/usr/local/bin:$PATH"
 
+ARG DKMS_VERSION=v0.8.2
+ARG DKMS_SHA256=""
+
+# Runtime deps:
+#   libsodium23  — pysodium / ctypes needs this
+#   libssl3      — HCF's dkms-bin dynamically links OpenSSL 3
+#   ca-certificates — dkms-bin reaches out to witness/watcher over HTTPS
+#   curl         — one-shot, used only during image build to fetch dkms-bin
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libsodium23 \
-    && rm -rf /var/lib/apt/lists/* \
+        libsodium23 libssl3 ca-certificates curl \
+    && curl -fsSLo /tmp/dkms.tar.gz \
+        "https://github.com/THCLab/dkms-bin/releases/download/${DKMS_VERSION}/dkms-x86_64-unknown-linux-gnuubuntu-24.04.tar.gz" \
+    && tar -xzf /tmp/dkms.tar.gz -C /tmp \
+    && install -m 0755 /tmp/dkms /usr/local/bin/dkms \
+    && rm -rf /tmp/dkms /tmp/dkms.tar.gz \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 1000 --home-dir /code --shell /usr/sbin/nologin dsiss
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
@@ -52,8 +66,12 @@ COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 # WORKDIR itself, hiding the package). Matches the ds-login layout.
 COPY --from=builder /build/app /code/app
 
-# KERI habery LMDB lives here — mount a PVC in-cluster.
-RUN mkdir -p /var/lib/ds-credential-issuer /var/lib/ds-credential-issuer/keystore \
+# KERI habery LMDB (legacy KERIpy path, kept while we migrate off) +
+# dkms-bin state (new) both live under this one PVC. HOME points at
+# the dkms sub-dir so `dkms` writes to `/var/lib/ds-credential-issuer/dkms/.dkms-dev-cli/`.
+ENV HOME=/var/lib/ds-credential-issuer/dkms
+RUN mkdir -p /var/lib/ds-credential-issuer/keystore \
+                 /var/lib/ds-credential-issuer/dkms \
     && chown -R dsiss:dsiss /code /var/lib/ds-credential-issuer
 
 USER dsiss
