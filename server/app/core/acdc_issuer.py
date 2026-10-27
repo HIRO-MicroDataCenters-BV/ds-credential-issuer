@@ -257,21 +257,31 @@ def _extract_signature_qb64_from_sign(output: str) -> str:
 
     ``dkms data sign`` echoes the message bytes then appends CESR
     attachments. The attachments carry either an indexed sig (prefix
-    ``-AAB`` / ``-AAC``, 88-char body) or an unindexed Ed25519 sig
-    (code ``0B`` or ``0A``, 88 chars total including the 2-char code).
+    ``-AAB`` / ``-AAC`` CESR counter, then the 88-char sig body) or an
+    unindexed Ed25519 sig (code ``0B`` or ``0A``, 88 chars total
+    including the 2-char code).
+
+    We return just the 88-char sig BODY in both cases — the ``-AAB``
+    counter is a stream-framing primitive, not part of the serialised
+    signature. Shipping the counter inside ``grant.iss_sig`` would make
+    the verifier's ``Siger(qb64=...)`` constructor trip "Unexpected
+    count code start while extracting Matter" (confirmed end-to-end
+    against KERIpy's current indexing module in HUS). The verifier then
+    hands the body to ``Siger(qb64=...)`` directly or falls back to
+    ``Cigar(qb64=...)`` for the unindexed shape.
 
     Returns an empty string if neither shape is found — callers raise
     an IssueError so the mint fails loudly rather than ship an empty
     ``iss_sig`` that would cost a verifier-side debugging session.
     """
-    # Indexed-sig CESR attachment first (what KERIpy expects for KEL events).
+    # Indexed-sig CESR attachment: skip the 4-char counter, return the
+    # 88-char Ed25519 sig body (code 'A' + 1-char index + 86-char body).
     for marker in ("-AAB", "-AAC"):
         i = output.find(marker)
         if i >= 0:
-            # 4-char attachment code + 88-char Ed25519 sig body.
-            chunk = output[i:i + 4 + 88]
-            if len(chunk) == 4 + 88:
-                return chunk
+            body = output[i + 4 : i + 4 + 88]
+            if len(body) == 88:
+                return body
     # Unindexed Ed25519 (bare qb64 sig, 88 chars including the 2-char code).
     for marker in ("0B", "0A"):
         i = output.find(marker)

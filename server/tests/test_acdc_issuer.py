@@ -53,10 +53,13 @@ _FAKE_ACDC_BODY = (
 # version header declares exact body byte count (0x17f = 383)
 assert len(_FAKE_ACDC_BODY) == 0x17f
 
-_FAKE_EXPECTED_SIG = "-AAB" + "A" * 88
-assert len(_FAKE_EXPECTED_SIG) == 92
+_FAKE_EXPECTED_SIG = "A" * 88
+assert len(_FAKE_EXPECTED_SIG) == 88
+# dkms data sign emits "<message>-AAB<88-char sig body>"; the issuer
+# strips the -AAB counter and ships just the 88-char body.
+_FAKE_SIGN_ATTACHMENT = "-AAB" + _FAKE_EXPECTED_SIG
 
-_FAKE_SIGN_OUTPUT = _FAKE_ACDC_BODY.decode("utf-8") + _FAKE_EXPECTED_SIG
+_FAKE_SIGN_OUTPUT = _FAKE_ACDC_BODY.decode("utf-8") + _FAKE_SIGN_ATTACHMENT
 
 
 def _make_issuer() -> tuple[AcdcIssuer, MagicMock]:
@@ -179,8 +182,15 @@ def test_parse_dkms_issue_output_raises_on_missing_version_header():
 
 
 def test_extract_signature_prefers_indexed_sig():
-    sig = "-AAB" + "A" * 88
-    assert _extract_signature_qb64_from_sign("prefix " + sig + " suffix") == sig
+    """Returns just the 88-char sig body, not the ``-AAB`` counter prefix.
+
+    The counter is a CESR stream-framing primitive and would trip the
+    verifier's ``Siger(qb64=...)`` constructor ("Unexpected count code
+    start while extracting Matter"). Ship just the signature itself.
+    """
+    body = "A" * 88
+    attachment = "-AAB" + body
+    assert _extract_signature_qb64_from_sign("prefix " + attachment + " suffix") == body
 
 
 def test_extract_signature_returns_empty_when_absent():
