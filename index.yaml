@@ -3,6 +3,29 @@ entries:
   ds-credential-issuer:
   - apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-10-28T10:42:36.933583428Z"
+    description: Per-node ACDC credential issuer for a NextGen EU dataspace site.
+    digest: 3978187367c207df2ce344a33aa6857e3bb54fd43b902e132d2d6b5cbf0ba180
+    home: https://github.com/HIRO-MicroDataCenters-BV/ds-credential-issuer
+    keywords:
+    - keri
+    - acdc
+    - issuer
+    - credentials
+    - dataspace
+    - nextgen
+    maintainers:
+    - email: all-hiro@hiro-microdatacenters.nl
+      name: HIRO-MicroDataCenters
+    name: ds-credential-issuer
+    sources:
+    - https://github.com/HIRO-MicroDataCenters-BV/ds-credential-issuer
+    type: application
+    urls:
+    - https://github.com/HIRO-MicroDataCenters-BV/ds-credential-issuer/releases/download/ds-credential-issuer-0.2.1/ds-credential-issuer-0.2.1.tgz
+    version: 0.2.1
+  - apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-10-26T13:44:50.359147812Z"
     description: Per-node ACDC credential issuer for a NextGen EU dataspace site.
     digest: 989b057407614fc8cecd44b5951e82789918485429ec10455c4932f812e3ea36
@@ -162,4 +185,4 @@ entries:
     urls:
     - https://github.com/HIRO-MicroDataCenters-BV/ds-credential-issuer/releases/download/ds-credential-issuer-0.1.0/ds-credential-issuer-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-26T13:44:50.359180704Z"
+generated: "2026-10-28T10:42:36.933601772Z"
