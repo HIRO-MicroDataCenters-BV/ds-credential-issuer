@@ -184,26 +184,96 @@ class AcdcIssuer:
                 f"{self.issuer.aid}. Refusing to ship an un-anchored grant."
             )
 
-        import json as _json
+        # Build real OOBI URLs from the LocationScheme / EndRole objects
+        # dkms-bin emits. The verifier's fallback path hits one of these
+        # URLs when the inline iss_kel_cesr is unusable (e.g. this
+        # issuer's build is pre-#24 or the holder stripped the field).
+        #
+        # URL shape (per the KERI OOBI spec):
+        #   <location.url>oobi/<endrole.cid>/witness/<endrole.eid>
+        # pairs the location for a witness with the endrole binding that
+        # names this issuer as the controller of record. We only emit
+        # EndRole entries whose cid == self.aid — otherwise the registry
+        # SAID's own EndRole would leak into witness_urls, which Rahul
+        # audit #4 caught as 'registry ID listed as a witness OOBI'.
+        iss_oobi_urls = _build_oobi_urls(oobi_objects, self.issuer.aid)
+        witness_aids = sorted({
+            o["eid"] for o in oobi_objects
+            if isinstance(o, dict)
+            and o.get("role") == "witness"
+            and o.get("cid") == self.issuer.aid
+            and isinstance(o.get("eid"), str)
+        })
+
         return {
             "acdc": credential.acdc,
             "iss_sig": credential.issuer_signature_qb64,
             "iss_cesr_stream": credential.cesr_stream,
             "iss_kel_cesr": iss_kel_cesr,
             "iss_oobis": {
-                # Phase 1 shape — JSON objects per dkms-bin.
+                # Phase 1 shape — JSON objects per dkms-bin. Verifiers
+                # that know the shape can resolve them via mesagkesto;
+                # verifiers that don't fall back to witness_urls below.
                 "oobi_objects": oobi_objects,
-                # Legacy — kept during the migration, now stringified
-                # objects rather than URLs.
-                "witness_urls": [
-                    _json.dumps(o, separators=(",", ":"))
-                    for o in oobi_objects
-                ],
-                "witness_aids": [],
+                # Real HTTP URLs the verifier can GET directly. Pre-#28
+                # this field held stringified JSON objects, which failed
+                # ds-login's fallback with 'Request URL is missing an
+                # http:// or https:// protocol'. Rahul audit #4.
+                "witness_urls": iss_oobi_urls,
+                "witness_aids": witness_aids,
                 "registry_said": registry_said,
                 "tel_witness_urls": [self.issuer.watcher_url],
             },
         }
+
+
+# ─── OOBI URL construction ─────────────────────────────────────────────
+
+
+def _build_oobi_urls(
+    oobi_objects: list[dict[str, Any]], controller_aid: str
+) -> list[str]:
+    """Turn dkms-bin's OOBI objects into real HTTP URLs for the verifier.
+
+    dkms-bin emits two kinds of entry:
+      * ``LocationScheme`` — ``{"eid": "...", "scheme": "http", "url": "..."}``
+        bare-witness location (the witness's base URL).
+      * ``EndRole``        — ``{"cid": "...", "role": "witness", "eid": "..."}``
+        binds controller ``cid`` to witness ``eid`` with the named role.
+
+    A KERI OOBI URL joins the two:
+      ``<location.url>oobi/<endrole.cid>/witness/<endrole.eid>``
+
+    Entries whose ``cid`` is not ``controller_aid`` are skipped — otherwise
+    the registry SAID's own EndRole (which dkms-bin emits in the same
+    list) would leak into the witness URL set, which Rahul audit #4
+    caught in HUS. Entries without a matching LocationScheme are also
+    skipped (we have no base URL to join).
+    """
+    locations_by_eid: dict[str, str] = {}
+    for entry in oobi_objects:
+        if not isinstance(entry, dict):
+            continue
+        eid = entry.get("eid")
+        url = entry.get("url")
+        if "scheme" in entry and isinstance(eid, str) and isinstance(url, str):
+            locations_by_eid[eid] = url.rstrip("/") + "/"
+
+    oobi_urls: list[str] = []
+    for entry in oobi_objects:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "witness":
+            continue
+        cid = entry.get("cid")
+        eid = entry.get("eid")
+        if cid != controller_aid or not isinstance(eid, str):
+            continue
+        base = locations_by_eid.get(eid)
+        if base is None:
+            continue
+        oobi_urls.append(f"{base}oobi/{cid}/witness/{eid}")
+    return oobi_urls
 
 
 # ─── CESR stream parsing ───────────────────────────────────────────────
