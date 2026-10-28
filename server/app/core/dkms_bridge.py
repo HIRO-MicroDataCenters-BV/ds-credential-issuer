@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,10 @@ _KERI_EVENT_START = '{"v":"KERI'
 # (its own ``rpy`` location reply, receipts) is not part of the KEL.
 _KEL_EVENT_TYPES = frozenset({"icp", "rot", "ixn", "dip", "drt"})
 _EVENT_TYPE_RE = re.compile(r'"t":"(\w+)"')
+
+# Files a complete dkms alias folder holds besides db/ (id, current and next
+# private key). An alias folder with none of them holds no identity.
+_KEY_FILES = ("id", "priv_key", "next_priv_key")
 
 
 class DkmsBridgeError(RuntimeError):
@@ -138,6 +143,13 @@ class DkmsBridge:
         ``dkms identifier init`` is NOT idempotent — a second call with
         the same alias errors out. We probe with ``identifier info``
         first so a restarted pod re-uses the AID on its persisted PVC.
+
+        ``init`` can also exit 0 after failing half-way (for example when
+        the witness's advertised URL is unreachable), leaving an alias
+        folder with no keys. ``info`` then panics and every later ``init``
+        stops at an "overwrite? (y|N)" prompt, so the pod crash-loops. A
+        folder with no key files holds no identity: it is moved aside and
+        ``init`` runs again. A folder with key files is never touched.
         """
         existing = self.identifier_info_or_none(alias)
         if existing is not None:
@@ -146,6 +158,8 @@ class DkmsBridge:
                 alias, existing.aid,
             )
             return existing
+
+        self._set_aside_half_created(alias)
 
         args = [
             "identifier", "init",
@@ -156,11 +170,47 @@ class DkmsBridge:
         ]
         log.info("dkms identifier init a=%s w=%s watcher=%s",
                  alias, witness_url, watcher_url)
-        self._run(args)
+        # Answer "no" to any overwrite prompt: init must never replace keys.
+        r = self._run(args, stdin="n\n")
 
-        info = self.identifier_info(alias)
+        info = self.identifier_info_or_none(alias)
+        if info is None:
+            raise DkmsBridgeError(
+                f"dkms identifier init for {alias!r} exited 0 but left no "
+                f"usable identifier (often: the witness's advertised URL is "
+                f"unreachable from this pod). The half-made folder is set "
+                f"aside on the next start. dkms output: {r.stdout[-500:]!r}"
+            )
         log.info("dkms identifier init done: alias=%s aid=%s", alias, info.aid)
         return info
+
+    def _alias_dir(self, alias: str) -> Path:
+        return self.home_dir / ".dkms-dev-cli" / alias
+
+    def _set_aside_half_created(self, alias: str) -> None:
+        """Move an alias folder without key files out of the way.
+
+        Called only when ``identifier info`` has failed. Without key files
+        there is no identity to lose; with any key file the folder may be a
+        real identity, so we stop and leave it for a human.
+        """
+        folder = self._alias_dir(alias)
+        if not folder.exists():
+            return
+        key_files = [n for n in _KEY_FILES if (folder / n).exists()]
+        if key_files:
+            raise DkmsBridgeError(
+                f"dkms identifier info fails for {alias!r} but {folder} holds "
+                f"key files ({', '.join(key_files)}). Not touching it: this "
+                f"may be the site's identity. Inspect it by hand."
+            )
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = folder.with_name(f"{alias}.half-created-{stamp}")
+        folder.rename(target)
+        log.warning(
+            "dkms alias %r was half-created (no key files); moved %s to %s "
+            "and initialising again", alias, folder, target,
+        )
 
     def identifier_info(self, alias: str) -> IdentifierInfo:
         r = self._run(["identifier", "info", alias])
