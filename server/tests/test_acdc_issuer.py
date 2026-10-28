@@ -21,6 +21,7 @@ import pytest
 from app.core.acdc_issuer import (
     AcdcIssuer,
     IssueError,
+    _build_oobi_urls,
     _extract_signature_qb64_from_sign,
     _parse_dkms_issue_output,
 )
@@ -279,3 +280,72 @@ def test_extract_signature_skips_mid_word_matches_for_unindexed():
     real_sig = "0B" + "A" * 86
     out = body + "\n" + real_sig
     assert _extract_signature_qb64_from_sign(out) == real_sig
+
+
+# ─── _build_oobi_urls (Rahul audit #4) ──────────────────────────────────
+
+
+_ISSUER_AID = "EDi8bCl_7IiF5Au18-adTDcVabJcaxciZuLA-6mWF0lo"
+_REGISTRY_AID = "EKD3sfPYtpbDrrO4k3WAVVu3YEve1NBDUZAU9BDdE1bF"
+_WITNESS_AID = "BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"
+
+
+def test_build_oobi_urls_pairs_locationscheme_with_endrole():
+    """dkms-bin emits a flat list mixing LocationScheme and EndRole
+    entries. Build a real HTTP OOBI URL for each (location, endrole)
+    pair that names this issuer as the controller."""
+    objects = [
+        {"eid": _WITNESS_AID, "scheme": "http",
+         "url": "http://ds-dkms-witness-1:3232/"},
+        {"cid": _ISSUER_AID, "role": "witness", "eid": _WITNESS_AID},
+    ]
+    urls = _build_oobi_urls(objects, _ISSUER_AID)
+    assert urls == [
+        f"http://ds-dkms-witness-1:3232/oobi/{_ISSUER_AID}/witness/{_WITNESS_AID}"
+    ]
+
+
+def test_build_oobi_urls_filters_out_registry_endrole():
+    """dkms-bin includes an EndRole for the TEL registry too. The
+    registry's cid is NOT the issuer AID, so it must not leak into
+    the witness URL set — the previous code shipped it, Rahul
+    audit #4."""
+    objects = [
+        {"eid": _WITNESS_AID, "scheme": "http",
+         "url": "http://ds-dkms-witness-1:3232/"},
+        {"cid": _ISSUER_AID,  "role": "witness", "eid": _WITNESS_AID},
+        {"cid": _REGISTRY_AID, "role": "witness", "eid": _WITNESS_AID},
+    ]
+    urls = _build_oobi_urls(objects, _ISSUER_AID)
+    assert len(urls) == 1
+    assert _REGISTRY_AID not in urls[0]
+
+
+def test_build_oobi_urls_skips_endrole_without_location():
+    """An EndRole whose eid has no matching LocationScheme would produce
+    a URL with no base — skip rather than ship a broken one."""
+    objects = [
+        # No LocationScheme for _WITNESS_AID.
+        {"cid": _ISSUER_AID, "role": "witness", "eid": _WITNESS_AID},
+    ]
+    assert _build_oobi_urls(objects, _ISSUER_AID) == []
+
+
+def test_build_oobi_urls_tolerates_url_without_trailing_slash():
+    """Some LocationScheme emitters omit the trailing slash on url;
+    make the joined URL work either way."""
+    objects = [
+        {"eid": _WITNESS_AID, "scheme": "http",
+         "url": "http://ds-dkms-witness-1:3232"},   # no trailing /
+        {"cid": _ISSUER_AID, "role": "witness", "eid": _WITNESS_AID},
+    ]
+    urls = _build_oobi_urls(objects, _ISSUER_AID)
+    assert urls == [
+        f"http://ds-dkms-witness-1:3232/oobi/{_ISSUER_AID}/witness/{_WITNESS_AID}"
+    ]
+
+
+def test_build_oobi_urls_handles_empty_input():
+    assert _build_oobi_urls([], _ISSUER_AID) == []
+    assert _build_oobi_urls([{}], _ISSUER_AID) == []
+    assert _build_oobi_urls([{"junk": "data"}], _ISSUER_AID) == []
