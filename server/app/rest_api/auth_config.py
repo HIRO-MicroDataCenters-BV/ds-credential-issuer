@@ -34,8 +34,11 @@ PERMISSION_MAP: list[tuple[str, str, str]] = [
 ]
 
 
-# Paths that bypass auth entirely — ops-only.
+# Paths that bypass auth entirely — ops-only. The operator bootstrap is
+# here because no operator JWT can exist yet; it is guarded by its own
+# one-time token instead (see routes/bootstrap.py).
 PUBLIC_PATHS: tuple[str, ...] = (
+    "/bootstrap/operator",
     "/health-check",
     "/health-check/",
     "/metrics",
