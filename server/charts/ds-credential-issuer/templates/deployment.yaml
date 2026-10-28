@@ -45,7 +45,8 @@ spec:
               value: {{ .Values.issuer.name | quote }}
             - name: DS__ISSUER__HABERY_PATH
               value: {{ .Values.issuer.haberyPath | quote }}
-            # dkms-bin facade (Phase 1) ---------------------------------
+            # dkms-bin facade (Phase 1). No trailing dashes on comment lines:
+            # Fleet reads a line ending in three dashes as a YAML document break.
             - name: DS__ISSUER__DKMS_WITNESS_URL
               value: {{ .Values.issuer.dkmsWitnessUrl | quote }}
             - name: DS__ISSUER__DKMS_WATCHER_URL
