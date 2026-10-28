@@ -70,6 +70,15 @@ spec:
               value: {{ .Values.issuer.mesagkestoUrl | quote }}
             - name: DS__ISSUER__INCEPTION_THRESHOLD
               value: {{ .Values.issuer.inceptionThreshold | quote }}
+            {{- with .Values.issuer.bootstrapTokenSecret }}
+            # One-time operator bootstrap (POST /bootstrap/operator).
+            - name: DS__ISSUER__BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: token
+                  optional: true
+            {{- end }}
             {{- if .Values.auth.enabled }}
             - name: DS__AUTH__ENABLED
               value: "true"

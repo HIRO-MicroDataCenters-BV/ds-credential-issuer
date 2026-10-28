@@ -36,6 +36,9 @@ issuer:
   defaultOcaBundleSaid: ""
   mesagkestoUrl: ""
   inceptionThreshold: 1
+  # One-time operator bootstrap (POST /bootstrap/operator). Name of a Secret
+  # with key `token` (>= 32 chars). Empty = endpoint off. Remove after use.
+  bootstrapTokenSecret: ""
   # ─── DEPRECATED (previous KERIpy path) ─────────────────────────────
   witnessUrls: []
   witnessAids: []
