@@ -350,6 +350,13 @@ class DkmsBridge:
         r = self._run(args)
         return r.stdout.strip()
 
+    def data_revoke(self, alias: str, said: str) -> str:
+        """Revoke the credential ``said`` in ``alias``'s TEL registry
+        (``brv`` event, anchored in the KEL). Verifiers can't read it back
+        from HCF's witness yet; see :mod:`app.core.revocations`."""
+        r = self._run(["data", "revoke", "-a", alias, "-s", said])
+        return r.stdout
+
     def data_sign(self, alias: str, message: bytes | str) -> str:
         """Sign arbitrary bytes with ``alias``'s current signing key.
 

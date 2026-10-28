@@ -77,3 +77,28 @@ class PresentRequest(BaseModel):
             "AID the grant should be delivered to via mesagkesto"
         ),
     )
+
+
+SAID_PATTERN = r"^E[A-Za-z0-9_-]{43}$"
+
+
+class RevokeRequest(BaseModel):
+    reason: str = Field(default="", max_length=500, description="Why it is revoked")
+
+
+class RevokeResponse(BaseModel):
+    said: str
+    status: str = Field(description="Always `revoked`")
+    revoked_at: str
+    revoked_by: str
+    reason: str
+    already_revoked: bool = Field(description="True if it was revoked before this call")
+    tel_anchored: bool = Field(
+        description="Whether `dkms data revoke` also wrote the KERI TEL event"
+    )
+
+
+class CredentialStatusResponse(BaseModel):
+    said: str
+    status: str = Field(description="`revoked` or `not_revoked`")
+    revoked_at: str | None = None

@@ -85,6 +85,10 @@ class Issuer(BaseModel):
         default=Path("/var/lib/ds-credential-issuer/bootstrap-operator.done"),
         description="Written when the operator bootstrap succeeded; blocks reuse",
     )
+    revocation_db: Path = Field(
+        default=Path("/var/lib/ds-credential-issuer/revocations.db"),
+        description="SQLite file holding the HIRO-side revocation list",
+    )
 
     # ─── legacy KERIpy fields (deprecated, scheduled for removal) ───
     witness_urls: list[str] = Field(

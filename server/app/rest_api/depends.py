@@ -5,6 +5,7 @@ from fastapi import Request
 
 from ..core.acdc_issuer import AcdcIssuer
 from ..core.issuer_habery import IssuerHandle
+from ..core.revocations import RevocationStore
 from ..settings import Settings, get_settings
 
 
@@ -19,3 +20,7 @@ def issuer_handle_dep(request: Request) -> IssuerHandle:
 
 def acdc_issuer_dep(request: Request) -> AcdcIssuer:
     return request.app.state.acdc_issuer  # type: ignore[no-any-return]
+
+
+def revocation_store_dep(request: Request) -> RevocationStore:
+    return request.app.state.revocations  # type: ignore[no-any-return]

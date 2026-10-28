@@ -1,32 +1,42 @@
 """Credential lifecycle endpoints.
 
-Phase 1 (this PR):
-  * POST /credentials   — fully implemented, mints + wraps as IPEX grant
+Implemented:
+  * POST /credentials   — mints + wraps as IPEX grant
+  * POST /credentials/{said}/revoke — HIRO-side revocation list (+ dkms TEL)
+  * GET /credential-status?said=… — public; ds-login asks before each login
 
 Phase 2 (follow-up PRs):
   * GET /credentials    — list for a subject (needs the TEL registry PR)
   * GET /credentials/{said}
-  * POST /credentials/{said}/revoke
   * POST /credentials/{said}/present (deliver via mesagkesto)
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from ...core.acdc_issuer import AcdcIssuer, IssueError
 from ...core.dkms_bridge import DkmsBridgeError
+from ...core.revocations import RevocationStore
 from ..api_models import (
+    SAID_PATTERN,
+    CredentialStatusResponse,
     CredentialSummary,
     IssueCredentialRequest,
     IssueCredentialResponse,
     PresentRequest,
+    RevokeRequest,
+    RevokeResponse,
 )
-from ..depends import acdc_issuer_dep
+from ..depends import acdc_issuer_dep, revocation_store_dep
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/credentials", tags=["credentials"])
+status_router = APIRouter(tags=["credentials"])
+
+# ds-auth puts the caller's AID from the JWT here (client copies are stripped).
+CALLER_AID_HEADER = "x-user-aid"
 
 
 @router.post("", response_model=IssueCredentialResponse)
@@ -87,17 +97,51 @@ def get_credential(said: str) -> CredentialSummary:
     )
 
 
-@router.post("/{said}/revoke")
-def revoke_credential(said: str) -> dict[str, str]:
-    """Anchor a revocation event in the issuer's TEL. **Phase 2 stub.**"""
-    _ = said
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "revoke_credential not yet implemented — needs TEL registry "
-            "(ROADMAP Phase 2)"
-        ),
+@router.post("/{said}/revoke", response_model=RevokeResponse)
+def revoke_credential(
+    request: Request,
+    said: str = Path(pattern=SAID_PATTERN),
+    body: RevokeRequest | None = None,
+    issuer: AcdcIssuer = Depends(acdc_issuer_dep),
+    revocations: RevocationStore = Depends(revocation_store_dep),
+) -> RevokeResponse:
+    """Revoke a credential. The HIRO-side list is authoritative (ds-login
+    checks it); the KERI TEL event is written too, best effort, for when
+    HCF's TEL can be read back. Revoking twice is harmless."""
+    revoked_by = request.headers.get(CALLER_AID_HEADER, "unknown")
+    record, newly = revocations.revoke(said, revoked_by, body.reason if body else "")
+
+    tel_anchored = False
+    if newly:
+        log.warning("credential revoked: said=%s by=%s reason=%r",
+                    said, revoked_by, record.reason)
+        try:
+            issuer.issuer.bridge.data_revoke(issuer.issuer.name, said)
+            tel_anchored = True
+        except DkmsBridgeError as e:
+            log.warning("dkms data revoke failed for %s (list entry kept): %s", said, e)
+
+    return RevokeResponse(
+        said=said,
+        status="revoked",
+        revoked_at=record.revoked_at,
+        revoked_by=record.revoked_by,
+        reason=record.reason,
+        already_revoked=not newly,
+        tel_anchored=tel_anchored,
     )
+
+
+@status_router.get("/credential-status", response_model=CredentialStatusResponse)
+def credential_status(
+    said: str = Query(pattern=SAID_PATTERN),
+    revocations: RevocationStore = Depends(revocation_store_dep),
+) -> CredentialStatusResponse:
+    """Revoked or not, for one credential SAID. Public: verifiers ask here."""
+    record = revocations.get(said)
+    if record is None:
+        return CredentialStatusResponse(said=said, status="not_revoked")
+    return CredentialStatusResponse(said=said, status="revoked", revoked_at=record.revoked_at)
 
 
 @router.post("/{said}/present")
