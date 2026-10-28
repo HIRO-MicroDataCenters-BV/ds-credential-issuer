@@ -122,6 +122,78 @@ def test_issue_extracts_signature_from_sign_output():
     assert issued.said == "ECredSAID0000000000000000000000000000000000AA"
 
 
+# ─── wrap_as_grant: fail-loud when KEL unavailable (Rahul audit #3) ─────
+
+
+def _make_issuer_with_kel(kel_response):
+    """Issuer whose bridge.log_kel_find behaves as `kel_response`:
+    - str  → returned as-is
+    - Exception subclass → raised when called
+    - callable → called
+    """
+    bridge = MagicMock()
+    bridge.data_issue.return_value = _FAKE_ACDC_BODY.decode("utf-8")
+    bridge.data_sign.return_value = _FAKE_SIGN_OUTPUT
+    bridge.identifier_oobi_get.return_value = []
+    if isinstance(kel_response, Exception):
+        bridge.log_kel_find.side_effect = kel_response
+    else:
+        bridge.log_kel_find.return_value = kel_response
+    handle = _FakeHandle(bridge=bridge)
+    return AcdcIssuer(issuer=handle, issuer_settings=_FakeIssuerSettings()), bridge
+
+
+def test_wrap_as_grant_raises_when_dkms_log_kel_find_fails():
+    """Seen in HUS right after watcher restart: `dkms log kel find`
+    errored with 'role Watcher missing'. Previously we logged a warning
+    and shipped iss_kel_cesr="". The grant looked 200 OK to the operator
+    but every holder presenting it got rejected at verify time. Now the
+    exception propagates — the /credentials route maps DkmsBridgeError
+    to 503, surfacing the real problem to the operator's monitoring."""
+    from app.core.dkms_bridge import DkmsBridgeError
+
+    issuer, _ = _make_issuer_with_kel(DkmsBridgeError("role Watcher missing"))
+    issued = issuer.issue(
+        subject_aid="ESubjectAID0000000000000000000000000000000AA",
+        schema_said="ignored",
+        attributes={"role": "researcher"},
+    )
+    with pytest.raises(DkmsBridgeError, match="role Watcher missing"):
+        issuer.wrap_as_grant(issued)
+
+
+def test_wrap_as_grant_raises_when_dkms_log_kel_find_returns_empty():
+    """Guard against a future dkms-bin that returns exit 0 but an empty
+    stream (dkms init already has that failure mode). Still a 503."""
+    from app.core.dkms_bridge import DkmsBridgeError
+
+    issuer, _ = _make_issuer_with_kel("")  # empty stream
+    issued = issuer.issue(
+        subject_aid="ESubjectAID0000000000000000000000000000000AA",
+        schema_said="ignored",
+        attributes={"role": "researcher"},
+    )
+    with pytest.raises(DkmsBridgeError, match="empty CESR stream"):
+        issuer.wrap_as_grant(issued)
+
+
+def test_wrap_as_grant_ok_when_log_kel_find_returns_stream():
+    """Happy path: bridge returns a KEL stream, grant carries it as
+    iss_kel_cesr. Regression against the fail-loud path being too
+    aggressive."""
+    issuer, _ = _make_issuer_with_kel(
+        '{"v":"KERI10JSON000159_","t":"icp","d":"EN8anz...","i":"EN8anz..."}'
+        '-AAB' + 'A' * 88
+    )
+    issued = issuer.issue(
+        subject_aid="ESubjectAID0000000000000000000000000000000AA",
+        schema_said="ignored",
+        attributes={"role": "researcher"},
+    )
+    grant = issuer.wrap_as_grant(issued)
+    assert grant["iss_kel_cesr"].startswith('{"v":"KERI10JSON')
+
+
 def test_issue_fails_loudly_when_sign_output_has_no_signature():
     issuer, bridge = _make_issuer()
     bridge.data_sign.return_value = _FAKE_ACDC_BODY.decode("utf-8")  # no attachment

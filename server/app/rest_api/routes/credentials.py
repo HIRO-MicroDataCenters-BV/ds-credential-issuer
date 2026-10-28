@@ -36,18 +36,24 @@ def issue_credential(
 ) -> IssueCredentialResponse:
     """Mint an ACDC bound to ``subject_aid`` and return it wrapped as an
     IPEX grant the holder can present to any ds-login verifier."""
+    # Both issue() and wrap_as_grant() can raise DkmsBridgeError when
+    # dkms-bin's state is unhealthy (watcher dropped EndRole after a
+    # restart, witness unreachable, …). Wrap the whole pipeline so the
+    # 503 fires for either phase instead of leaking a 500. The grant
+    # won't verify at the holder's login time anyway without the
+    # issuer's own KEL in it, so fail loudly here.
     try:
         issued = issuer.issue(
             subject_aid=body.subject_aid,
             schema_said=body.schema_said,
             attributes=body.attributes,
         )
+        grant = issuer.wrap_as_grant(issued)
     except DkmsBridgeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except IssueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    grant = issuer.wrap_as_grant(issued)
     return IssueCredentialResponse(
         said=issued.said,
         issuer_aid=issued.issuer_aid,
