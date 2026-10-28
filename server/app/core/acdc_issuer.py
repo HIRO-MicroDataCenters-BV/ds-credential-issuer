@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..settings import Issuer as IssuerSettings
-from .dkms_bridge import DkmsBridgeError
+from .dkms_bridge import DkmsBridgeError, kel_events_only
 from .issuer_habery import IssuerHandle
 
 log = logging.getLogger(__name__)
@@ -165,24 +165,14 @@ class AcdcIssuer:
             oobi_objects = []
 
         # The verifier needs the issuer's KEL to check the ACDC signature.
-        # If dkms-bin can't produce it (seen in HUS right after watcher
-        # pod restart — the issuer's EndRole with the watcher is dropped
-        # and `dkms log kel find` errors out with "role Watcher missing"),
-        # the grant is DOA. Previously we logged a warning and shipped
-        # iss_kel_cesr="", which looked like a 200 OK to the operator but
-        # every holder presenting that grant would be rejected at verify
-        # time with "KEL unresolvable". Re-raise as DkmsBridgeError so
-        # the /credentials route maps to 503 and the operator's observa-
-        # bility stack sees it instead of silently corrupting credential
-        # state. Rahul audit #3.
-        iss_kel_cesr = self.issuer.bridge.log_kel_find(
-            self.issuer.name, self.issuer.aid,
-        )
-        if not iss_kel_cesr:
-            raise DkmsBridgeError(
-                f"dkms log kel find returned empty CESR stream for "
-                f"{self.issuer.aid}. Refusing to ship an un-anchored grant."
-            )
+        # Read it from the issuer's witnesses first: `dkms log kel find`
+        # goes through the watcher, which forgets the issuer's role on
+        # every watcher restart ("role Watcher missing"), after which no
+        # grant could be minted. The watcher stays as a fallback. If
+        # neither yields a KEL, raise DkmsBridgeError so the /credentials
+        # route answers 503 rather than shipping an un-anchored grant
+        # (Rahul audit #3).
+        iss_kel_cesr = self._own_kel()
 
         # Build real OOBI URLs from the LocationScheme / EndRole objects
         # dkms-bin emits. The verifier's fallback path hits one of these
@@ -225,6 +215,28 @@ class AcdcIssuer:
                 "tel_witness_urls": [self.issuer.watcher_url],
             },
         }
+
+    def _own_kel(self) -> str:
+        """The issuer's own KEL: from its witnesses, else via the watcher.
+
+        Only KEL events are returned (no witness ``rpy``), so a verifier
+        that walks the stream event by event accepts it.
+        """
+        bridge = self.issuer.bridge
+        try:
+            return bridge.witness_kel(self.issuer.name, self.issuer.aid)
+        except DkmsBridgeError as e:
+            log.warning("issuer KEL not available from witnesses (%s); "
+                        "falling back to dkms log kel find", e)
+        iss_kel_cesr = kel_events_only(
+            bridge.log_kel_find(self.issuer.name, self.issuer.aid)
+        )
+        if not iss_kel_cesr:
+            raise DkmsBridgeError(
+                f"dkms log kel find returned empty CESR stream for "
+                f"{self.issuer.aid}. Refusing to ship an un-anchored grant."
+            )
+        return iss_kel_cesr
 
 
 # ─── OOBI URL construction ─────────────────────────────────────────────
