@@ -37,8 +37,11 @@ PERMISSION_MAP: list[tuple[str, str, str]] = [
 # Paths that bypass auth entirely — ops-only. The operator bootstrap is
 # here because no operator JWT can exist yet; it is guarded by its own
 # one-time token instead (see routes/bootstrap.py).
+# ``/credential-status`` is public so verifiers (ds-login) can ask whether a
+# credential was revoked; it answers only revoked / not revoked for a SAID.
 PUBLIC_PATHS: tuple[str, ...] = (
     "/bootstrap/operator",
+    "/credential-status",
     "/health-check",
     "/health-check/",
     "/metrics",

@@ -37,7 +37,6 @@ def client():
     [
         ("GET", "/credentials"),
         ("GET", "/credentials/ESomeSAID"),
-        ("POST", "/credentials/ESomeSAID/revoke"),
         ("GET", "/schemas"),
         ("GET", "/schemas/ESomeSAID"),
         ("POST", "/schemas"),

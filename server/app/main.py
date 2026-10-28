@@ -9,8 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .core.acdc_issuer import AcdcIssuer
 from .core.issuer_habery import close_habery, init_habery
+from .core.revocations import RevocationStore
 from .rest_api.routes.bootstrap import router as bootstrap_router
 from .rest_api.routes.credentials import router as credentials_router
+from .rest_api.routes.credentials import status_router as credential_status_router
 from .rest_api.routes.health_check import router as health_router
 from .rest_api.routes.schemas import router as schemas_router
 from .settings import get_settings
@@ -33,6 +35,7 @@ async def lifespan(app: FastAPI):
     app.state.acdc_issuer = AcdcIssuer(
         issuer=issuer_handle, issuer_settings=settings.issuer
     )
+    app.state.revocations = RevocationStore(settings.issuer.revocation_db)
     log.info("issuer ready: aid=%s", issuer_handle.aid)
 
     yield
@@ -100,5 +103,6 @@ if settings.auth.enabled:
 
 app.include_router(health_router)
 app.include_router(credentials_router)
+app.include_router(credential_status_router)
 app.include_router(bootstrap_router)
 app.include_router(schemas_router)
