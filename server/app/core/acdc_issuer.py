@@ -164,14 +164,25 @@ class AcdcIssuer:
                         self.issuer.alias, e)
             oobi_objects = []
 
-        try:
-            iss_kel_cesr = self.issuer.bridge.log_kel_find(
-                self.issuer.name, self.issuer.aid,
+        # The verifier needs the issuer's KEL to check the ACDC signature.
+        # If dkms-bin can't produce it (seen in HUS right after watcher
+        # pod restart — the issuer's EndRole with the watcher is dropped
+        # and `dkms log kel find` errors out with "role Watcher missing"),
+        # the grant is DOA. Previously we logged a warning and shipped
+        # iss_kel_cesr="", which looked like a 200 OK to the operator but
+        # every holder presenting that grant would be rejected at verify
+        # time with "KEL unresolvable". Re-raise as DkmsBridgeError so
+        # the /credentials route maps to 503 and the operator's observa-
+        # bility stack sees it instead of silently corrupting credential
+        # state. Rahul audit #3.
+        iss_kel_cesr = self.issuer.bridge.log_kel_find(
+            self.issuer.name, self.issuer.aid,
+        )
+        if not iss_kel_cesr:
+            raise DkmsBridgeError(
+                f"dkms log kel find returned empty CESR stream for "
+                f"{self.issuer.aid}. Refusing to ship an un-anchored grant."
             )
-        except DkmsBridgeError as e:
-            log.warning("dkms log kel find %s failed: %s",
-                        self.issuer.aid, e)
-            iss_kel_cesr = ""
 
         import json as _json
         return {
