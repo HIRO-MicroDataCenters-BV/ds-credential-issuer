@@ -39,6 +39,15 @@ class IssueCredentialResponse(BaseModel):
     )
 
 
+class BootstrapOperatorRequest(BaseModel):
+    """POST /bootstrap/operator body: who becomes the first operator."""
+
+    subject_aid: str = Field(..., description="Operator's AID, anchored at this site's witness")
+    name: str = Field(..., description="Operator's name (credential claim)")
+    email: str = Field(..., description="Operator's email (credential claim)")
+    institute: str = Field("hiro", description="Institute claim; must match the policy rules")
+
+
 class CredentialSummary(BaseModel):
     said: str
     issuer_aid: str

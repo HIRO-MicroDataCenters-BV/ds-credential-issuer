@@ -74,6 +74,17 @@ class Issuer(BaseModel):
         default="",
         description="OCA bundle SAID used for every ACDC we issue",
     )
+    # One-time bootstrap of the first operator (POST /bootstrap/operator).
+    # Off unless a token of at least 32 characters is set; meant to come
+    # from a Kubernetes Secret and be removed after use.
+    bootstrap_token: str = Field(
+        default="",
+        description="Secret for POST /bootstrap/operator; empty disables it",
+    )
+    bootstrap_marker: Path = Field(
+        default=Path("/var/lib/ds-credential-issuer/bootstrap-operator.done"),
+        description="Written when the operator bootstrap succeeded; blocks reuse",
+    )
 
     # ─── legacy KERIpy fields (deprecated, scheduled for removal) ───
     witness_urls: list[str] = Field(
