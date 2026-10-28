@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [develop, main]
   push:
-    branches: [develop]
+    branches: [develop, main]
 
 jobs:
   test:
@@ -46,7 +46,9 @@ jobs:
   build-image:
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    # Build on develop and main, like ds-login: a fix merged to main gets an
+    # image (…-dev.<run>.main.<sha>) without first syncing develop.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     permissions:
       contents: read
       packages: write
@@ -83,6 +85,6 @@ jobs:
           file: server/Dockerfile
           push: true
           tags: |
-            ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:develop
+            ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:${{ github.ref_name }}
             ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:${{ github.sha }}
             ghcr.io/hiro-microdatacenters-bv/ds-credential-issuer:${{ steps.tag.outputs.versioned }}
