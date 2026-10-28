@@ -126,16 +126,25 @@ def test_issue_extracts_signature_from_sign_output():
 # ─── wrap_as_grant: fail-loud when KEL unavailable (Rahul audit #3) ─────
 
 
-def _make_issuer_with_kel(kel_response):
+def _make_issuer_with_kel(kel_response, witness_kel=None):
     """Issuer whose bridge.log_kel_find behaves as `kel_response`:
     - str  → returned as-is
     - Exception subclass → raised when called
     - callable → called
+
+    ``witness_kel`` is what bridge.witness_kel returns; by default it
+    raises, so these tests exercise the watcher fallback.
     """
+    from app.core.dkms_bridge import DkmsBridgeError
+
     bridge = MagicMock()
     bridge.data_issue.return_value = _FAKE_ACDC_BODY.decode("utf-8")
     bridge.data_sign.return_value = _FAKE_SIGN_OUTPUT
     bridge.identifier_oobi_get.return_value = []
+    if witness_kel is None:
+        bridge.witness_kel.side_effect = DkmsBridgeError("no witness answered")
+    else:
+        bridge.witness_kel.return_value = witness_kel
     if isinstance(kel_response, Exception):
         bridge.log_kel_find.side_effect = kel_response
     else:
@@ -193,6 +202,42 @@ def test_wrap_as_grant_ok_when_log_kel_find_returns_stream():
     )
     grant = issuer.wrap_as_grant(issued)
     assert grant["iss_kel_cesr"].startswith('{"v":"KERI10JSON')
+
+
+_ICP = '{"v":"KERI10JSON000159_","t":"icp","d":"EIssuer","i":"EIssuer","s":"0"}-AAB' + "A" * 88
+
+
+def test_wrap_as_grant_reads_kel_from_witness_first():
+    """The witness answers even after a watcher restart, so it is asked
+    first and `dkms log kel find` (via the watcher) is not needed."""
+    from app.core.dkms_bridge import DkmsBridgeError
+
+    issuer, bridge = _make_issuer_with_kel(
+        DkmsBridgeError("role Watcher missing"), witness_kel=_ICP,
+    )
+    issued = issuer.issue(
+        subject_aid="ESubjectAID0000000000000000000000000000000AA",
+        schema_said="ignored",
+        attributes={"role": "researcher"},
+    )
+    grant = issuer.wrap_as_grant(issued)
+    assert grant["iss_kel_cesr"] == _ICP
+    bridge.log_kel_find.assert_not_called()
+
+
+def test_wrap_as_grant_falls_back_to_watcher_and_drops_rpy():
+    """Witnesses unreachable: the watcher's KEL is used, with any non-KEL
+    message (a witness rpy) removed so ds-login's KEL walker accepts it."""
+    rpy = '{"v":"KERI10JSON000113_","t":"rpy","d":"EReply","r":"/loc/scheme"}-CAB' + "B" * 132
+    issuer, bridge = _make_issuer_with_kel(_ICP + rpy)
+    issued = issuer.issue(
+        subject_aid="ESubjectAID0000000000000000000000000000000AA",
+        schema_said="ignored",
+        attributes={"role": "researcher"},
+    )
+    grant = issuer.wrap_as_grant(issued)
+    assert grant["iss_kel_cesr"] == _ICP
+    bridge.log_kel_find.assert_called_once()
 
 
 def test_issue_fails_loudly_when_sign_output_has_no_signature():

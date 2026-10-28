@@ -11,6 +11,10 @@ dkms-bin per Rahul's audit and the pivot to the facade pattern:
   * ``data issue`` — build + sign an ACDC in the HCF reference shape
     (payload under ``acdc.a.a``) and emit the CESR stream.
 
+The issuer's own KEL is read from its witnesses over plain HTTP
+(:meth:`DkmsBridge.witness_kel`), not through ``dkms log kel find``,
+which goes via the watcher and fails after every watcher restart.
+
 The ACDC verify path is intentionally NOT delegated — we keep KERIpy
 in-process on the verifier side so ADR 0001's security posture holds
 (the four known ``dkms-bin v0.8.2`` verify bugs stay out of our code
@@ -21,13 +25,24 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 log = logging.getLogger(__name__)
+
+# Start of a KERI event in a CESR stream. Attachments are qb64 text and
+# never contain this, so it safely splits a stream into events.
+_KERI_EVENT_START = '{"v":"KERI'
+# Message types that make up a KEL. Anything else in a witness response
+# (its own ``rpy`` location reply, receipts) is not part of the KEL.
+_KEL_EVENT_TYPES = frozenset({"icp", "rot", "ixn", "dip", "drt"})
+_EVENT_TYPE_RE = re.compile(r'"t":"(\w+)"')
 
 
 class DkmsBridgeError(RuntimeError):
@@ -212,6 +227,45 @@ class DkmsBridge:
             )
         return r.stdout[start:].strip()
 
+    def witness_kel(
+        self, alias: str, identifier: str, timeout_seconds: float = 5.0,
+    ) -> str:
+        """Return ``identifier``'s KEL as served by ``alias``'s witnesses.
+
+        Each witness serves the KEL of the identifiers it witnesses at
+        ``GET <url>oobi/<identifier>/witness/<witness-eid>``. This needs
+        neither the watcher nor any registration, so it keeps working
+        after a watcher restart, which drops the role ``log kel find``
+        depends on ("role Watcher missing").
+
+        The response ends with the witness's own ``rpy`` location reply;
+        only the KEL events are returned. The first event must be the
+        inception of ``identifier``. Raises :class:`DkmsBridgeError` if
+        no witness returns one.
+        """
+        info = self.identifier_info(alias)
+        errors: list[str] = []
+        for witness in info.witness_urls:
+            if not isinstance(witness, dict) or not witness.get("url") or not witness.get("eid"):
+                continue
+            url = f"{str(witness['url']).rstrip('/')}/oobi/{identifier}/witness/{witness['eid']}"
+            try:
+                resp = httpx.get(url, timeout=timeout_seconds)
+            except httpx.HTTPError as e:
+                errors.append(f"{url}: {e}")
+                continue
+            if resp.status_code != 200:
+                errors.append(f"{url}: HTTP {resp.status_code}")
+                continue
+            kel = kel_events_only(resp.text)
+            if _starts_with_inception_of(kel, identifier):
+                return kel
+            errors.append(f"{url}: no inception event for {identifier}")
+        raise DkmsBridgeError(
+            f"no witness of {alias!r} returned the KEL of {identifier}: "
+            f"{'; '.join(errors) or 'no witness URLs in identifier info'}"
+        )
+
     # ─── credential issuance ───────────────────────────────────────────
 
     def data_issue(
@@ -266,6 +320,33 @@ class DkmsBridge:
 
 
 # ─── helpers ───────────────────────────────────────────────────────────
+
+
+def kel_events_only(stream: str) -> str:
+    """Keep only the KEL events (and their attachments) of a CESR stream.
+
+    A witness's OOBI response is the KEL followed by the witness's own
+    ``rpy`` location reply, whose identifier is the witness. Verifiers that
+    walk the stream as a KEL reject that ``rpy``, so it is dropped here.
+    Anything before the first event (dkms log noise) is dropped too.
+    """
+    parts = stream.split(_KERI_EVENT_START)[1:]
+    kept = []
+    for part in parts:
+        event = _KERI_EVENT_START + part
+        m = _EVENT_TYPE_RE.search(event)
+        if m and m.group(1) in _KEL_EVENT_TYPES:
+            kept.append(event)
+    return "".join(kept).strip()
+
+
+def _starts_with_inception_of(kel: str, identifier: str) -> bool:
+    """True if ``kel``'s first event is the inception of ``identifier``."""
+    if not kel.startswith(_KERI_EVENT_START):
+        return False
+    first = kel.split(_KERI_EVENT_START, 2)[1]
+    m = _EVENT_TYPE_RE.search(first)
+    return bool(m and m.group(1) == "icp" and f'"i":"{identifier}"' in first)
 
 
 def _parse_identifier_info(alias: str, raw: str) -> IdentifierInfo:
