@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 from app.core.acdc_issuer import IssuedCredential
 from app.core.dkms_bridge import DkmsBridgeError
 from app.main import app
-from app.rest_api.depends import acdc_issuer_dep, settings_dep
+from app.core.revocations import RevocationStore
+from app.rest_api.depends import acdc_issuer_dep, revocation_store_dep, settings_dep
 from app.settings import Settings
 
 TOKEN = "t" * 40
@@ -32,18 +33,25 @@ def _issued() -> IssuedCredential:
     )
 
 
+_stores: dict[int, RevocationStore] = {}
+
+
 @pytest.fixture
 def env(tmp_path):
     """(client, issuer mock, settings) with a fresh marker path."""
     settings = Settings()
     settings.issuer.bootstrap_token = TOKEN
     settings.issuer.bootstrap_marker = tmp_path / "bootstrap-operator.done"
+    settings.issuer.institute = "hus"
+    store = RevocationStore(tmp_path / "revocations.db")
     issuer = MagicMock()
     issuer.issuer.name = "hus-issuer"
     issuer.issue.return_value = _issued()
     issuer.wrap_as_grant.return_value = {"acdc": {"d": "ECredSAID"}}
     app.dependency_overrides[acdc_issuer_dep] = lambda: issuer
     app.dependency_overrides[settings_dep] = lambda: settings
+    app.dependency_overrides[revocation_store_dep] = lambda: store
+    _stores[id(settings)] = store  # for assertions
     yield TestClient(app), issuer, settings
     app.dependency_overrides.clear()
 
@@ -59,8 +67,9 @@ def test_issues_operator_credential_once(env):
     assert r.status_code == 200
     assert r.json()["subject_aid"] == OPERATOR
     attrs = issuer.issue.call_args.kwargs["attributes"]
-    assert attrs["role"] == "operator"
-    assert attrs["institute"] == "hiro"
+    assert attrs["role"] == "site_admin"        # issuer.bootstrap_role default
+    assert attrs["institute"] == "hus"          # issuer.institute, not the body's
+    assert _stores[id(settings)].issued_role("ECredSAID") == "site_admin"
     issuer.issuer.bridge.witness_kel.assert_called_once_with("hus-issuer", OPERATOR)
     assert settings.issuer.bootstrap_marker.exists()
 

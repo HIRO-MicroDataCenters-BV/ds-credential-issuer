@@ -85,6 +85,17 @@ class Issuer(BaseModel):
         default=Path("/var/lib/ds-credential-issuer/bootstrap-operator.done"),
         description="Written when the operator bootstrap succeeded; blocks reuse",
     )
+    # The site this issuer belongs to (hus, ki, uva; hiro on local kind). Set
+    # = every credential's `institute` is this value (a different one in a
+    # request is refused). Empty = the request's value is used as is.
+    institute: str = Field(
+        default="",
+        description="Site name stamped as `institute` on every credential",
+    )
+    bootstrap_role: str = Field(
+        default="site_admin",
+        description="Role of the credential POST /bootstrap/operator issues",
+    )
     revocation_db: Path = Field(
         default=Path("/var/lib/ds-credential-issuer/revocations.db"),
         description="SQLite file holding the HIRO-side revocation list",
