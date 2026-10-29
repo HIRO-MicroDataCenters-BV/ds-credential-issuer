@@ -71,8 +71,14 @@ spec:
               value: {{ .Values.issuer.mesagkestoUrl | quote }}
             - name: DS__ISSUER__INCEPTION_THRESHOLD
               value: {{ .Values.issuer.inceptionThreshold | quote }}
+            # The site this issuer belongs to, stamped as `institute` on every
+            # credential (empty: taken from the request).
+            - name: DS__ISSUER__INSTITUTE
+              value: {{ .Values.issuer.institute | quote }}
+            - name: DS__ISSUER__BOOTSTRAP_ROLE
+              value: {{ .Values.issuer.bootstrapRole | quote }}
             {{- with .Values.issuer.bootstrapTokenSecret }}
-            # One-time operator bootstrap (POST /bootstrap/operator).
+            # One-time first-admin bootstrap (POST /bootstrap/operator).
             - name: DS__ISSUER__BOOTSTRAP_TOKEN
               valueFrom:
                 secretKeyRef:

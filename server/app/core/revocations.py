@@ -1,4 +1,4 @@
-"""HIRO-side revocation list (interim).
+"""HIRO-side revocation list (interim), and the role of each issued credential.
 
 HCF's TEL can't be read back yet ("Tel not found" before and after
 ``dkms data revoke``), so verifiers can't learn from KERI whether a
@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS revocations (
     revoked_at TEXT NOT NULL,
     revoked_by TEXT NOT NULL,
     reason     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS issued (
+    said       TEXT PRIMARY KEY,
+    role       TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    issued_at  TEXT NOT NULL,
+    issued_by  TEXT NOT NULL
 )
 """
 
@@ -39,7 +46,7 @@ class RevocationStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
-            db.execute(_SCHEMA)
+            db.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=10)
@@ -51,6 +58,20 @@ class RevocationStore:
                 "WHERE said = ?", (said,),
             ).fetchone()
         return Revocation(*row) if row else None
+
+    def record_issued(self, said: str, role: str, subject: str, issued_by: str) -> None:
+        """Remember who got which role, so revoking can check who may revoke it."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO issued VALUES (?, ?, ?, ?, ?)",
+                       (said, role, subject, now, issued_by))
+
+    def issued_role(self, said: str) -> str | None:
+        """Role of a credential this issuer issued; None if unknown (issued
+        before roles were recorded, or not by this issuer)."""
+        with self._connect() as db:
+            row = db.execute("SELECT role FROM issued WHERE said = ?", (said,)).fetchone()
+        return row[0] if row else None
 
     def revoke(self, said: str, revoked_by: str, reason: str) -> tuple[Revocation, bool]:
         """Record the revocation. Returns (record, newly_revoked); revoking

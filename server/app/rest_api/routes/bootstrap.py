@@ -10,7 +10,8 @@ the normal path. This endpoint closes that gap once:
     call answers 410. Issuing failures release the marker.
   * The subject AID must be anchored at this issuer's witness (ds-login
     only trusts KELs from its configured witnesses) → 400 otherwise.
-  * The credential (``role=operator``) is signed by the site issuer, the
+  * The credential (``role`` = ``issuer.bootstrap_role``, default
+    ``site_admin``; ``institute`` = ``issuer.institute`` when set) is signed by the site issuer, the
     same way ``POST /credentials`` signs, so ds-login's trusted-issuer list
     accepts it.
 
@@ -30,7 +31,8 @@ from ...core.acdc_issuer import AcdcIssuer, IssueError
 from ...core.dkms_bridge import DkmsBridgeError
 from ...settings import Settings
 from ..api_models import BootstrapOperatorRequest, IssueCredentialResponse
-from ..depends import acdc_issuer_dep, settings_dep
+from ...core.revocations import RevocationStore
+from ..depends import acdc_issuer_dep, revocation_store_dep, settings_dep
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/bootstrap", tags=["bootstrap"])
@@ -44,8 +46,9 @@ def bootstrap_operator(
     x_bootstrap_token: str | None = Header(default=None),
     issuer: AcdcIssuer = Depends(acdc_issuer_dep),
     settings: Settings = Depends(settings_dep),
+    revocations: RevocationStore = Depends(revocation_store_dep),
 ) -> IssueCredentialResponse:
-    """Issue the first ``operator`` credential, once, with a secret token."""
+    """Issue the first admin credential (``issuer.bootstrap_role``), once, with a secret token."""
     token = settings.issuer.bootstrap_token
     if len(token) < MIN_TOKEN_LENGTH:
         if token:
@@ -80,8 +83,8 @@ def bootstrap_operator(
                 subject_aid=body.subject_aid,
                 schema_said="",
                 attributes={
-                    "role": "operator",
-                    "institute": body.institute,
+                    "role": settings.issuer.bootstrap_role,
+                    "institute": settings.issuer.institute or body.institute,
                     "name": body.name,
                     "email": body.email,
                 },
@@ -104,9 +107,11 @@ def bootstrap_operator(
     }
     with os.fdopen(fd, "w") as f:
         json.dump(record, f)
-    log.warning("BOOTSTRAP: operator credential %s issued to %s; bootstrap now "
-                "closed — remove DS__ISSUER__BOOTSTRAP_TOKEN", issued.said,
-                issued.subject_aid)
+    revocations.record_issued(issued.said, settings.issuer.bootstrap_role,
+                              issued.subject_aid, "bootstrap")
+    log.warning("BOOTSTRAP: %s credential %s issued to %s; bootstrap now "
+                "closed — remove DS__ISSUER__BOOTSTRAP_TOKEN",
+                settings.issuer.bootstrap_role, issued.said, issued.subject_aid)
     return IssueCredentialResponse(
         said=issued.said,
         issuer_aid=issued.issuer_aid,

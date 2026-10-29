@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from ...core.acdc_issuer import AcdcIssuer, IssueError
 from ...core.dkms_bridge import DkmsBridgeError
 from ...core.revocations import RevocationStore
+from ...core.roles import KNOWN_ROLES, may_manage
+from ...settings import Settings
 from ..api_models import (
     SAID_PATTERN,
     CredentialStatusResponse,
@@ -29,23 +31,62 @@ from ..api_models import (
     RevokeRequest,
     RevokeResponse,
 )
-from ..depends import acdc_issuer_dep, revocation_store_dep
+from ..depends import acdc_issuer_dep, revocation_store_dep, settings_dep
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/credentials", tags=["credentials"])
 status_router = APIRouter(tags=["credentials"])
 
-# ds-auth puts the caller's AID from the JWT here (client copies are stripped).
+# ds-auth puts the caller's AID and role from the JWT here (client copies are stripped).
 CALLER_AID_HEADER = "x-user-aid"
+CALLER_ROLE_HEADER = "x-user-role"
+
+
+def _check_caller_may_manage(request: Request, settings: Settings,
+                             target_role: str | None, action: str) -> None:
+    """403 unless the caller's role may issue/revoke `target_role` (see
+    core/roles.py). Without ds-auth there is no caller identity to check."""
+    if not settings.auth.enabled:
+        return
+    caller = request.headers.get(CALLER_ROLE_HEADER)
+    if not may_manage(caller, target_role):
+        raise HTTPException(
+            status_code=403,
+            detail=f"role {caller!r} may not {action} a {target_role or 'pre-existing'!s} credential",
+        )
 
 
 @router.post("", response_model=IssueCredentialResponse)
 def issue_credential(
+    request: Request,
     body: IssueCredentialRequest,
     issuer: AcdcIssuer = Depends(acdc_issuer_dep),
+    settings: Settings = Depends(settings_dep),
+    revocations: RevocationStore = Depends(revocation_store_dep),
 ) -> IssueCredentialResponse:
     """Mint an ACDC bound to ``subject_aid`` and return it wrapped as an
-    IPEX grant the holder can present to any ds-login verifier."""
+    IPEX grant the holder can present to any ds-login verifier.
+
+    The role must be a known one and one the caller may issue; the
+    institute is this site (``issuer.institute``) when that is set."""
+    attributes = dict(body.attributes)
+    role = attributes.get("role")
+    if role not in KNOWN_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"role {role!r} is not one of {', '.join(KNOWN_ROLES)}",
+        )
+    site = settings.issuer.institute
+    if site:
+        asked = attributes.get("institute")
+        if asked not in (None, "", site):
+            raise HTTPException(
+                status_code=422,
+                detail=f"this issuer issues for site {site!r}, not {asked!r}",
+            )
+        attributes["institute"] = site
+    _check_caller_may_manage(request, settings, role, "issue")
+
     # Both issue() and wrap_as_grant() can raise DkmsBridgeError when
     # dkms-bin's state is unhealthy (watcher dropped EndRole after a
     # restart, witness unreachable, …). Wrap the whole pipeline so the
@@ -56,7 +97,7 @@ def issue_credential(
         issued = issuer.issue(
             subject_aid=body.subject_aid,
             schema_said=body.schema_said,
-            attributes=body.attributes,
+            attributes=attributes,
         )
         grant = issuer.wrap_as_grant(issued)
     except DkmsBridgeError as e:
@@ -64,6 +105,8 @@ def issue_credential(
     except IssueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    revocations.record_issued(issued.said, role, issued.subject_aid,
+                              request.headers.get(CALLER_AID_HEADER, "unknown"))
     return IssueCredentialResponse(
         said=issued.said,
         issuer_aid=issued.issuer_aid,
@@ -104,10 +147,12 @@ def revoke_credential(
     body: RevokeRequest | None = None,
     issuer: AcdcIssuer = Depends(acdc_issuer_dep),
     revocations: RevocationStore = Depends(revocation_store_dep),
+    settings: Settings = Depends(settings_dep),
 ) -> RevokeResponse:
     """Revoke a credential. The HIRO-side list is authoritative (ds-login
     checks it); the KERI TEL event is written too, best effort, for when
     HCF's TEL can be read back. Revoking twice is harmless."""
+    _check_caller_may_manage(request, settings, revocations.issued_role(said), "revoke")
     revoked_by = request.headers.get(CALLER_AID_HEADER, "unknown")
     record, newly = revocations.revoke(said, revoked_by, body.reason if body else "")
 

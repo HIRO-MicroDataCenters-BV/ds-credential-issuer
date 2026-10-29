@@ -36,9 +36,15 @@ issuer:
   defaultOcaBundleSaid: ""
   mesagkestoUrl: ""
   inceptionThreshold: 1
-  # One-time operator bootstrap (POST /bootstrap/operator). Name of a Secret
+  # The site this issuer belongs to (hus, ki, uva; hiro on local kind). Every
+  # credential's `institute` is this value; a request asking for another site
+  # is refused. Empty = the request's value is used as is.
+  institute: ""
+  # One-time first-admin bootstrap (POST /bootstrap/operator). Name of a Secret
   # with key `token` (>= 32 chars). Empty = endpoint off. Remove after use.
   bootstrapTokenSecret: ""
+  # Role of the credential the bootstrap issues.
+  bootstrapRole: site_admin
   # ─── DEPRECATED (previous KERIpy path) ─────────────────────────────
   witnessUrls: []
   witnessAids: []
