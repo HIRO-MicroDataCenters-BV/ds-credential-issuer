@@ -58,17 +58,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# --- CORS ---
-_cors_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()]
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
 # --- Optional ds-auth middleware (same pattern as sibling services) ---
 if settings.auth.enabled:
     if not settings.auth.jwks_url:
@@ -100,6 +89,28 @@ if settings.auth.enabled:
         public_paths=list(PUBLIC_PATHS),
     )
 
+
+
+def add_cors(app: FastAPI, origins_csv: str) -> None:
+    """Let the listed website origins ("*" = every website) call the API.
+
+    Must run after every other add_middleware: the middleware added last
+    sees a request first, so CORS answers the browser's preflight (which
+    never carries a token) before ds-auth can refuse it, and adds its
+    headers to ds-auth's 401/403 answers too."""
+    origins = [o.strip() for o in origins_csv.split(",") if o.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+
+# --- CORS (last, so it wraps ds-auth) ---
+add_cors(app, settings.cors_allowed_origins)
 
 app.include_router(health_router)
 app.include_router(credentials_router)
