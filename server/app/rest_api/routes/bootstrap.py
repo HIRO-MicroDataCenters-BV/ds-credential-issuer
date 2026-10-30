@@ -107,8 +107,11 @@ def bootstrap_operator(
     }
     with os.fdopen(fd, "w") as f:
         json.dump(record, f)
-    revocations.record_issued(issued.said, settings.issuer.bootstrap_role,
-                              issued.subject_aid, "bootstrap")
+    revocations.record_issued(
+        issued.said, settings.issuer.bootstrap_role, issued.subject_aid, "bootstrap",
+        institute=settings.issuer.institute or body.institute, name=body.name,
+        email=body.email, grant=grant,
+    )
     log.warning("BOOTSTRAP: %s credential %s issued to %s; bootstrap now "
                 "closed — remove DS__ISSUER__BOOTSTRAP_TOKEN",
                 settings.issuer.bootstrap_role, issued.said, issued.subject_aid)

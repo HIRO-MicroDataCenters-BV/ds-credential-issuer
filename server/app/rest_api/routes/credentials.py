@@ -2,12 +2,12 @@
 
 Implemented:
   * POST /credentials   — mints + wraps as IPEX grant
+  * GET /credentials    — what this issuer issued, with revocation state
+  * GET /credentials/{said} — one credential, with its grant
   * POST /credentials/{said}/revoke — HIRO-side revocation list (+ dkms TEL)
   * GET /credential-status?said=… — public; ds-login asks before each login
 
 Phase 2 (follow-up PRs):
-  * GET /credentials    — list for a subject (needs the TEL registry PR)
-  * GET /credentials/{said}
   * POST /credentials/{said}/present (deliver via mesagkesto)
 """
 from __future__ import annotations
@@ -18,11 +18,12 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from ...core.acdc_issuer import AcdcIssuer, IssueError
 from ...core.dkms_bridge import DkmsBridgeError
-from ...core.revocations import RevocationStore
+from ...core.revocations import IssuedRecord, RevocationStore
 from ...core.roles import KNOWN_ROLES, may_manage
 from ...settings import Settings
 from ..api_models import (
     SAID_PATTERN,
+    CredentialDetail,
     CredentialStatusResponse,
     CredentialSummary,
     IssueCredentialRequest,
@@ -105,8 +106,12 @@ def issue_credential(
     except IssueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    revocations.record_issued(issued.said, role, issued.subject_aid,
-                              request.headers.get(CALLER_AID_HEADER, "unknown"))
+    revocations.record_issued(
+        issued.said, role, issued.subject_aid,
+        request.headers.get(CALLER_AID_HEADER, "unknown"),
+        institute=str(attributes.get("institute", "")), name=str(attributes.get("name", "")),
+        email=str(attributes.get("email", "")), grant=grant,
+    )
     return IssueCredentialResponse(
         said=issued.said,
         issuer_aid=issued.issuer_aid,
@@ -115,29 +120,58 @@ def issue_credential(
     )
 
 
-# ─── Stubs (Phase 2 — tracked in ROADMAP) ────────────────────────────
+def _summary(record: IssuedRecord) -> CredentialSummary:
+    return CredentialSummary(
+        said=record.said, subject_aid=record.subject, role=record.role,
+        institute=record.institute, name=record.name, email=record.email,
+        issued_at=record.issued_at, issued_by=record.issued_by,
+        status="revoked" if record.revoked_at else "valid",
+        revoked_at=record.revoked_at, revoked_by=record.revoked_by,
+        revoke_reason=record.reason, has_grant=record.grant is not None,
+    )
+
+
+def _visible(request: Request, settings: Settings, role: str) -> bool:
+    """A caller sees the credentials it may manage (site_admin: all;
+    operator: data_provider, researcher) — the same rule as revoking.
+    Without ds-auth there is no caller identity, so everything is shown."""
+    if not settings.auth.enabled:
+        return True
+    return may_manage(request.headers.get(CALLER_ROLE_HEADER), role)
 
 
 @router.get("", response_model=list[CredentialSummary])
 def list_credentials(
-    subject: str | None = Query(default=None, description="Filter by subject AID"),
+    request: Request,
+    subject: str | None = Query(default=None, description="Only this holder's credentials"),
+    settings: Settings = Depends(settings_dep),
+    revocations: RevocationStore = Depends(revocation_store_dep),
 ) -> list[CredentialSummary]:
-    """List credentials issued by this issuer. **Phase 2 stub.**"""
-    _ = subject
-    raise HTTPException(
-        status_code=501,
-        detail="list_credentials not yet implemented — tracked in ROADMAP Phase 2",
-    )
+    """Credentials this issuer issued, newest first, with their revocation
+    state. The grant itself is left out (GET /credentials/{said})."""
+    return [
+        _summary(record)
+        for record in revocations.list_issued(subject)
+        if _visible(request, settings, record.role)
+    ]
 
 
-@router.get("/{said}", response_model=CredentialSummary)
-def get_credential(said: str) -> CredentialSummary:
-    """Fetch a credential's state. **Phase 2 stub.**"""
-    _ = said
-    raise HTTPException(
-        status_code=501,
-        detail="get_credential not yet implemented — tracked in ROADMAP Phase 2",
-    )
+@router.get("/{said}", response_model=CredentialDetail)
+def get_credential(
+    request: Request,
+    said: str = Path(pattern=SAID_PATTERN),
+    settings: Settings = Depends(settings_dep),
+    revocations: RevocationStore = Depends(revocation_store_dep),
+) -> CredentialDetail:
+    """One credential, with its grant when the issuer stored it."""
+    record = revocations.get_issued(said)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"no credential {said} issued here")
+    if not _visible(request, settings, record.role):
+        role = request.headers.get(CALLER_ROLE_HEADER)
+        raise HTTPException(status_code=403,
+                            detail=f"role {role!r} may not see a {record.role} credential")
+    return CredentialDetail(**_summary(record).model_dump(), grant=record.grant)
 
 
 @router.post("/{said}/revoke", response_model=RevokeResponse)
