@@ -49,12 +49,27 @@ class BootstrapOperatorRequest(BaseModel):
 
 
 class CredentialSummary(BaseModel):
+    """One credential this issuer issued (GET /credentials)."""
     said: str
-    issuer_aid: str
     subject_aid: str
-    schema_said: str
+    role: str
+    institute: str = Field(description="Empty for credentials issued before 30 Oct 2026")
+    name: str = Field(description="Empty for credentials issued before 30 Oct 2026")
+    email: str = Field(description="Empty for credentials issued before 30 Oct 2026")
     issued_at: str
-    revoked: bool
+    issued_by: str = Field(description="AID of the caller, or `bootstrap`")
+    status: str = Field(description="`valid` or `revoked`")
+    revoked_at: str | None = None
+    revoked_by: str | None = None
+    revoke_reason: str | None = None
+    has_grant: bool = Field(description="Whether GET /credentials/{said} can return the grant")
+
+
+class CredentialDetail(CredentialSummary):
+    """One credential with its grant (GET /credentials/{said})."""
+    grant: dict[str, Any] | None = Field(
+        default=None, description="The IPEX grant as issued; null if issued before 30 Oct 2026",
+    )
 
 
 class RegisterSchemaRequest(BaseModel):

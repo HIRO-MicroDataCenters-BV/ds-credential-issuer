@@ -35,8 +35,6 @@ def client():
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET", "/credentials"),
-        ("GET", "/credentials/ESomeSAID"),
         ("GET", "/schemas"),
         ("GET", "/schemas/ESomeSAID"),
         ("POST", "/schemas"),

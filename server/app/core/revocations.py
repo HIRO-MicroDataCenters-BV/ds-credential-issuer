@@ -6,15 +6,19 @@ credential was revoked. Until it can, the issuer keeps its own list in a
 small SQLite file on its PVC and serves the status over HTTP; ds-login
 asks before every login and refuses revoked credentials.
 
-The issuer keeps no record of what it issued, so any well-formed SAID can
-be revoked — that also covers credentials minted before this list existed.
+It also keeps what it issued (``issued``): role, holder, name, email and the
+grant, so admins can list credentials and download a grant again. Rows from
+before those columns existed have them empty. Any well-formed SAID can still
+be revoked, including credentials minted before this list existed.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS revocations (
@@ -32,6 +36,25 @@ CREATE TABLE IF NOT EXISTS issued (
 )
 """
 
+# Columns added after the first release; added to existing files on start.
+_ISSUED_EXTRA_COLUMNS = ("institute", "name", "email", "grant_json")
+
+
+@dataclass(frozen=True)
+class IssuedRecord:
+    said: str
+    role: str
+    subject: str
+    issued_at: str
+    issued_by: str
+    institute: str
+    name: str
+    email: str
+    grant: dict[str, Any] | None
+    revoked_at: str | None
+    revoked_by: str | None
+    reason: str | None
+
 
 @dataclass(frozen=True)
 class Revocation:
@@ -47,6 +70,10 @@ class RevocationStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript(_SCHEMA)
+            have = {row[1] for row in db.execute("PRAGMA table_info(issued)")}
+            for column in _ISSUED_EXTRA_COLUMNS:
+                if column not in have:
+                    db.execute(f"ALTER TABLE issued ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=10)
@@ -59,12 +86,50 @@ class RevocationStore:
             ).fetchone()
         return Revocation(*row) if row else None
 
-    def record_issued(self, said: str, role: str, subject: str, issued_by: str) -> None:
-        """Remember who got which role, so revoking can check who may revoke it."""
+    def record_issued(self, said: str, role: str, subject: str, issued_by: str, *,
+                      institute: str = "", name: str = "", email: str = "",
+                      grant: dict[str, Any] | None = None) -> None:
+        """Remember what was issued to whom: revoking checks who may revoke
+        it, and the list and download read it back."""
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO issued VALUES (?, ?, ?, ?, ?)",
-                       (said, role, subject, now, issued_by))
+            db.execute(
+                "INSERT OR REPLACE INTO issued (said, role, subject, issued_at, issued_by,"
+                " institute, name, email, grant_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (said, role, subject, now, issued_by, institute, name, email,
+                 json.dumps(grant) if grant is not None else ""),
+            )
+
+    _ISSUED_SELECT = (
+        "SELECT i.said, i.role, i.subject, i.issued_at, i.issued_by, i.institute,"
+        " i.name, i.email, i.grant_json, r.revoked_at, r.revoked_by, r.reason"
+        " FROM issued i LEFT JOIN revocations r ON r.said = i.said"
+    )
+
+    @staticmethod
+    def _record(row: tuple[Any, ...]) -> IssuedRecord:
+        (said, role, subject, issued_at, issued_by, institute, name, email,
+         grant_json, revoked_at, revoked_by, reason) = row
+        return IssuedRecord(
+            said=said, role=role, subject=subject, issued_at=issued_at,
+            issued_by=issued_by, institute=institute, name=name, email=email,
+            grant=json.loads(grant_json) if grant_json else None,
+            revoked_at=revoked_at, revoked_by=revoked_by, reason=reason,
+        )
+
+    def list_issued(self, subject: str | None = None) -> list[IssuedRecord]:
+        """Everything this issuer recorded, newest first, with revocation state."""
+        query, args = self._ISSUED_SELECT, cast(tuple[str, ...], ())
+        if subject:
+            query, args = query + " WHERE i.subject = ?", (subject,)
+        with self._connect() as db:
+            rows = db.execute(query + " ORDER BY i.issued_at DESC, i.said", args).fetchall()
+        return [self._record(row) for row in rows]
+
+    def get_issued(self, said: str) -> IssuedRecord | None:
+        with self._connect() as db:
+            row = db.execute(self._ISSUED_SELECT + " WHERE i.said = ?", (said,)).fetchone()
+        return self._record(row) if row else None
 
     def issued_role(self, said: str) -> str | None:
         """Role of a credential this issuer issued; None if unknown (issued
