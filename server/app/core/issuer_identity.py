@@ -26,7 +26,7 @@ from .dkms_bridge import DkmsBridge, DkmsBridgeError, IdentifierInfo
 log = logging.getLogger(__name__)
 
 
-class HaberyError(RuntimeError):
+class IssuerInitError(RuntimeError):
     """Raised when the issuer AID could not be enrolled or read back."""
 
 
@@ -69,16 +69,15 @@ def init_handle(settings: IssuerSettings) -> IssuerHandle:
     ``info`` first to make the whole call idempotent.
     """
     if not settings.dkms_witness_url or not settings.dkms_watcher_url:
-        raise HaberyError(
+        raise IssuerInitError(
             "issuer.dkms_witness_url and issuer.dkms_watcher_url must "
-            "both be set — the dkms-bin facade cannot operate self-"
-            "sovereign the way the old KERIpy path could."
+            "both be set: dkms-bin enrols the issuer AID with them."
         )
 
     try:
         bridge = DkmsBridge(home_dir=settings.dkms_home, bin_path=settings.dkms_bin)
     except DkmsBridgeError as e:
-        raise HaberyError(f"could not initialise DkmsBridge: {e}") from e
+        raise IssuerInitError(f"could not initialise DkmsBridge: {e}") from e
 
     try:
         info: IdentifierInfo = bridge.identifier_init(
@@ -88,7 +87,7 @@ def init_handle(settings: IssuerSettings) -> IssuerHandle:
             witness_threshold=settings.dkms_witness_threshold,
         )
     except DkmsBridgeError as e:
-        raise HaberyError(
+        raise IssuerInitError(
             f"dkms identifier init failed for alias {settings.name!r}: {e}"
         ) from e
 
@@ -106,15 +105,3 @@ def init_handle(settings: IssuerSettings) -> IssuerHandle:
         bridge=bridge,
     )
 
-
-# Backward-compat alias — several callers were importing the old name.
-init_habery = init_handle
-
-
-def close_habery(handle: IssuerHandle) -> None:
-    """No-op in the dkms-bin world — no long-lived handle to release.
-
-    Kept so ``main.py`` lifespan code can still call it; drop once
-    callers are updated.
-    """
-    _ = handle  # intentional

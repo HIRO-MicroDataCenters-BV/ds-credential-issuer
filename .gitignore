@@ -9,8 +9,7 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Local dev keystore / data
-server/dev-keystore/
+# Local dev data
 server/data/
 *.db
 *.db-journal

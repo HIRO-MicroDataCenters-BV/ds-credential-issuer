@@ -1,7 +1,7 @@
 # ds-credential-issuer — multi-stage image.
 #
-# KERIpy needs libsodium at runtime (via pysodium / ctypes). Debian slim
-# carries it; we don't need to build from source.
+# KERI work is done by HCF's dkms-bin (installed below); the Python code
+# does not use KERIpy, so no libsodium is needed.
 
 FROM python:3.12-slim-bookworm AS builder
 
@@ -14,8 +14,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
-        libsodium23 \
-        libsodium-dev \
         git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,13 +41,12 @@ ARG DKMS_VERSION=v0.8.2
 ARG DKMS_SHA256=""
 
 # Runtime deps:
-#   libsodium23  — pysodium / ctypes needs this
 #   libssl3      — HCF's dkms-bin dynamically links OpenSSL 3
 #   ca-certificates — dkms-bin reaches out to witness/watcher over HTTPS
 #   curl         — one-shot, used only during image build to fetch dkms-bin
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libsodium23 libssl3 ca-certificates curl \
+        libssl3 ca-certificates curl \
     && curl -fsSLo /tmp/dkms.tar.gz \
         "https://github.com/THCLab/dkms-bin/releases/download/${DKMS_VERSION}/dkms-x86_64-unknown-linux-gnuubuntu-24.04.tar.gz" \
     && tar -xzf /tmp/dkms.tar.gz -C /tmp \
@@ -66,12 +63,10 @@ COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 # WORKDIR itself, hiding the package). Matches the ds-login layout.
 COPY --from=builder /build/app /code/app
 
-# KERI habery LMDB (legacy KERIpy path, kept while we migrate off) +
-# dkms-bin state (new) both live under this one PVC. HOME points at
-# the dkms sub-dir so `dkms` writes to `/var/lib/ds-credential-issuer/dkms/.dkms-dev-cli/`.
+# dkms-bin state and the SQLite files live under this one PVC. HOME points
+# at the dkms sub-dir so `dkms` writes to `/var/lib/ds-credential-issuer/dkms/.dkms-dev-cli/`.
 ENV HOME=/var/lib/ds-credential-issuer/dkms
-RUN mkdir -p /var/lib/ds-credential-issuer/keystore \
-                 /var/lib/ds-credential-issuer/dkms \
+RUN mkdir -p /var/lib/ds-credential-issuer/dkms \
     && chown -R dsiss:dsiss /code /var/lib/ds-credential-issuer
 
 USER dsiss

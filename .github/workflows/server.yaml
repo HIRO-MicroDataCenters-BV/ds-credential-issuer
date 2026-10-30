@@ -20,11 +20,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsodium23 libsodium-dev
-
       - name: Install poetry
         run: pip install poetry==1.8.3
 

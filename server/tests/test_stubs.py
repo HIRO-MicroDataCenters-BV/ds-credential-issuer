@@ -16,7 +16,7 @@ from app.rest_api.routes.schemas import router as schemas_router
 def client():
     """Build an app that mounts just the route modules we want to test,
     with the lifespan-managed dependencies replaced by MagicMocks so the
-    tests don't need a working KERIpy habery."""
+    tests don't need a working dkms-bin."""
     from fastapi import FastAPI
 
     from app.rest_api.depends import acdc_issuer_dep, issuer_handle_dep

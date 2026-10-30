@@ -4,21 +4,21 @@
 
 - [x] Repo bootstrap: develop + main branches, LICENSE, pyproject, CI
 - [x] Settings via env (`DS__` prefix, nested `__` delimiter)
-- [x] KERIpy habery wiring (`core/issuer_habery.py`) — opens LMDB keystore,
+- [x] Issuer identity via HCF's dkms-bin (`core/issuer_identity.py`) —
       creates the per-site issuer AID on first boot
 - [x] ACDC mint (`core/acdc_issuer.py`) — signs with issuer's current key
 - [x] `POST /credentials` endpoint fully implemented
 - [x] IPEX grant wrapper matching `ds-login/app/core/ipex_grant.py` shape
 - [x] ds-auth optional integration (same pattern as ds-policy-engine, ds-catalog)
 - [x] FastAPI OpenAPI with every endpoint declared (stubs return 501)
-- [x] Dockerfile (multi-stage, libsodium in both layers)
+- [x] Dockerfile (multi-stage, dkms-bin baked in)
 - [x] Helm chart (deployment + service + PVC + optional ingress + optional ds-auth env)
 - [x] CI: ruff + mypy + pytest + docker build-push on push to develop
 
 ## Phase 2 — full IPEX scope (follow-up PRs, one endpoint per PR)
 
 - [ ] **TEL registry wiring** — anchor every mint as an issuance event in a
-      KERIpy `Registry`. Backing storage: the same LMDB habery.
+      KERI TEL.
 - [ ] **`GET /credentials?subject=<aid>`** — list credentials this issuer
       has minted, filtered by subject. Reads from the registry.
 - [ ] **`GET /credentials/{said}`** — fetch state (issued / revoked /

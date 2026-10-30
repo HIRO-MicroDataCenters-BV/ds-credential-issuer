@@ -31,7 +31,7 @@ from typing import Any
 
 from ..settings import Issuer as IssuerSettings
 from .dkms_bridge import DkmsBridgeError, kel_events_only
-from .issuer_habery import IssuerHandle
+from .issuer_identity import IssuerHandle
 
 log = logging.getLogger(__name__)
 

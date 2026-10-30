@@ -5,7 +5,7 @@ image:
   tag: "develop"
   pullPolicy: IfNotPresent
 
-replicaCount: 1   # single-writer against the KERI LMDB; do not scale
+replicaCount: 1   # single writer against dkms-bin's store and SQLite; do not scale
 
 service:
   type: ClusterIP
@@ -28,7 +28,6 @@ ingress:
 # receipting and watcher subscription on first boot.
 issuer:
   name: ds-credential-issuer
-  haberyPath: /var/lib/ds-credential-issuer/keystore  # kept for backward-compat; unused in facade path
   dkmsWitnessUrl: ""
   dkmsWatcherUrl: ""
   dkmsWitnessThreshold: 1
@@ -45,11 +44,6 @@ issuer:
   bootstrapTokenSecret: ""
   # Role of the credential the bootstrap issues.
   bootstrapRole: site_admin
-  # ─── DEPRECATED (previous KERIpy path) ─────────────────────────────
-  witnessUrls: []
-  witnessAids: []
-  witnessOobiBases: []
-  witnessOobis: []
 
 persistence:
   enabled: true

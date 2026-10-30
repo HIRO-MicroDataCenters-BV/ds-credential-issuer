@@ -9,9 +9,7 @@ repository = "https://github.com/HIRO-MicroDataCenters-BV/ds-credential-issuer"
 packages = [{ include = "*", from = "app" }]
 
 [tool.poetry.dependencies]
-# KERIpy 1.3.6 requires Python >= 3.12.6; hio 0.7+ requires 3.13 — pin hio
-# to 0.6.x so Python stays on 3.12.
-python = "^3.12.6"
+python = "^3.12"
 fastapi = "^0.115"
 uvicorn = { extras = ["standard"], version = "^0.30" }
 pydantic = "^2.9"
@@ -19,9 +17,6 @@ pydantic-settings = "^2.5"
 httpx = "^0.27"
 sqlalchemy = { extras = ["asyncio"], version = "^2.0" }
 aiosqlite = "^0.20"
-# KERI protocol stack
-keri = "1.3.6"
-hio = "~0.6.19"
 # Optional — only used when DS__AUTH__ENABLED=true. Keeps the service
 # backward compatible with the unauthenticated bootstrap flow.
 ds-auth = { git = "https://github.com/HIRO-MicroDataCenters-BV/ds-auth.git", rev = "develop", optional = true }
