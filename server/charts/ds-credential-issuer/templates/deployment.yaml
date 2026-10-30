@@ -8,8 +8,8 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
-    # Single writer against the KERI LMDB — rolling update would race on
-    # the shared PVC. Recreate is correct for this stateful service.
+    # Single writer against dkms-bin's store and the SQLite files: a rolling
+    # update would race on the shared PVC. Recreate is correct here.
     type: Recreate
   selector:
     matchLabels:
@@ -28,7 +28,7 @@ spec:
       # The container runs as the Dockerfile's dsiss user (uid 1000). The
       # mounted PVC comes up owned by root unless Kubernetes recursively
       # chowns it on mount — fsGroup triggers that chown. Without this the
-      # app crashes with PermissionError: '/var/lib/ds-credential-issuer/keystore'.
+      # app crashes with PermissionError on /var/lib/ds-credential-issuer.
       # Use `dig` so the render survives if a site overlay sets
       # podSecurityContext: {} (nil .fsGroup) or omits the whole key.
       securityContext:
@@ -43,8 +43,6 @@ spec:
           env:
             - name: DS__ISSUER__NAME
               value: {{ .Values.issuer.name | quote }}
-            - name: DS__ISSUER__HABERY_PATH
-              value: {{ .Values.issuer.haberyPath | quote }}
             # dkms-bin facade (Phase 1). No trailing dashes on comment lines:
             # Fleet reads a line ending in three dashes as a YAML document break.
             - name: DS__ISSUER__DKMS_WITNESS_URL
@@ -57,16 +55,6 @@ spec:
               value: {{ .Values.issuer.dkmsHome | quote }}
             - name: DS__ISSUER__DEFAULT_OCA_BUNDLE_SAID
               value: {{ .Values.issuer.defaultOcaBundleSaid | quote }}
-            # Legacy KERIpy settings — kept for backward-compat during the
-            # migration; the dkms-bin path above overrides their behaviour.
-            - name: DS__ISSUER__WITNESS_URLS
-              value: {{ toJson .Values.issuer.witnessUrls | quote }}
-            - name: DS__ISSUER__WITNESS_AIDS
-              value: {{ toJson .Values.issuer.witnessAids | quote }}
-            - name: DS__ISSUER__WITNESS_OOBI_BASES
-              value: {{ toJson .Values.issuer.witnessOobiBases | quote }}
-            - name: DS__ISSUER__WITNESS_OOBIS
-              value: {{ toJson .Values.issuer.witnessOobis | quote }}
             - name: DS__ISSUER__MESAGKESTO_URL
               value: {{ .Values.issuer.mesagkestoUrl | quote }}
             - name: DS__ISSUER__INCEPTION_THRESHOLD

@@ -5,8 +5,8 @@ All env vars use ``DS__`` prefix with ``__`` as the nested delimiter
 
     DS__ENVIRONMENT=production
     DS__ISSUER__NAME=hus
-    DS__ISSUER__HABERY_PATH=/var/lib/ds-credential-issuer/keystore
-    DS__ISSUER__WITNESS_OOBIS=["https://dkms-witness-1.hus.nextgen.hiro-develop.nl/oobi/BxxxAid"]
+    DS__ISSUER__DKMS_WITNESS_URL=http://ds-dkms-witness:3232
+    DS__ISSUER__DKMS_WATCHER_URL=http://ds-dkms-watcher:3235
     DS__ISSUER__MESAGKESTO_URL=http://ds-dkms-mesagkesto:8081
     DS__AUTH__ENABLED=true
     DS__AUTH__JWKS_URL=http://ds-login:8080/.well-known/jwks.json
@@ -24,22 +24,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Issuer(BaseModel):
     """Issuer identity + supporting infrastructure.
 
-    An issuer AID is derived from the keystore at ``habery_path`` (KERIpy
-    LMDB). The AID is created on first boot by the ``init_habery`` helper;
-    the resulting AID is logged and committed to ds-gitops so verifiers
-    can allowlist / introduce via its OOBIs.
+    The issuer AID lives in dkms-bin's store under ``dkms_home``. It is
+    created on first boot by ``init_handle``; the resulting AID is logged
+    and committed to ds-gitops so verifiers can allowlist / introduce via
+    its OOBIs.
     """
 
-    # Short name for this issuer — used as the KERIpy habitat alias and
+    # Short name for this issuer — used as the dkms alias and
     # the ``i`` field of minted ACDCs' chain-of-custody logs.
     name: str = Field(
         default="ds-credential-issuer",
-        description="Issuer habitat alias; one issuer per site",
-    )
-
-    habery_path: Path = Field(
-        default=Path("/var/lib/ds-credential-issuer/keystore"),
-        description="Where KERIpy stores the issuer's LMDB keystore and TEL",
+        description="Issuer's dkms alias; one issuer per site",
     )
 
     # ─── dkms-bin facade (preferred — matches HCF reference flow) ───
@@ -99,24 +94,6 @@ class Issuer(BaseModel):
     revocation_db: Path = Field(
         default=Path("/var/lib/ds-credential-issuer/revocations.db"),
         description="SQLite file holding the HIRO-side revocation list",
-    )
-
-    # ─── legacy KERIpy fields (deprecated, scheduled for removal) ───
-    witness_urls: list[str] = Field(
-        default_factory=list,
-        description="DEPRECATED. Use dkms_witness_url.",
-    )
-    witness_aids: list[str] = Field(
-        default_factory=list,
-        description="DEPRECATED. dkms-bin manages wits automatically.",
-    )
-    witness_oobi_bases: list[str] = Field(
-        default_factory=list,
-        description="DEPRECATED. dkms-bin publishes OOBIs via the watcher.",
-    )
-    witness_oobis: list[str] = Field(
-        default_factory=list,
-        description="DEPRECATED. See witness_oobi_bases.",
     )
 
     # Mesagkesto message box used to deliver IPEX grants.

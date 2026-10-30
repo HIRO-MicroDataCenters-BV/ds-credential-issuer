@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.acdc_issuer import AcdcIssuer
-from .core.issuer_habery import close_habery, init_habery
+from .core.issuer_identity import init_handle
 from .core.revocations import RevocationStore
 from .rest_api.routes.bootstrap import router as bootstrap_router
 from .rest_api.routes.credentials import router as credentials_router
@@ -26,11 +26,11 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=settings.log_level)
 
     log.info(
-        "ds-credential-issuer starting · env=%s issuer_name=%s habery=%s",
-        settings.environment, settings.issuer.name, settings.issuer.habery_path,
+        "ds-credential-issuer starting · env=%s issuer_name=%s dkms_home=%s",
+        settings.environment, settings.issuer.name, settings.issuer.dkms_home,
     )
 
-    issuer_handle = init_habery(settings.issuer)
+    issuer_handle = init_handle(settings.issuer)
     app.state.issuer_handle = issuer_handle
     app.state.acdc_issuer = AcdcIssuer(
         issuer=issuer_handle, issuer_settings=settings.issuer
@@ -41,7 +41,6 @@ async def lifespan(app: FastAPI):
     yield
 
     log.info("ds-credential-issuer shutting down")
-    close_habery(issuer_handle)
 
 
 settings = get_settings()

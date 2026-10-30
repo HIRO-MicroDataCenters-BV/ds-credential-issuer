@@ -1,4 +1,4 @@
-"""Request-schema tests — fast, no KERIpy dependency."""
+"""Request-schema tests — fast, no dkms-bin needed."""
 import pytest
 from pydantic import ValidationError
 

@@ -8,8 +8,8 @@ One instance per site. HUS, KI, UVA each run their own; so can partner organisat
 
 ```
 operator ──POST /credentials──▶ ds-credential-issuer
-                                 │ KERIpy habery
-                                 │ (per-site AID + LMDB keystore + TEL)
+                                 │ HCF's dkms-bin (`dkms` CLI)
+                                 │ (per-site AID + keys, kept under dkms_home)
                                  │
                                  ▼
                                  anchor issuance event
@@ -43,12 +43,17 @@ Phase 1 (this scaffold) implements the mint endpoint fully; Phase 2 endpoints re
 ```bash
 cd server
 poetry install --with dev,test
-export DS__ISSUER__HABERY_PATH=./dev-keystore
-export DS__ISSUER__WITNESS_URLS='["http://localhost:3232"]'
+# Needs the `dkms` CLI (dkms-bin v0.8.2) and a witness + watcher it can reach,
+# e.g. the local kind ones, port-forwarded.
+export DS__ISSUER__DKMS_BIN="$(which dkms)"
+export DS__ISSUER__DKMS_WITNESS_URL=http://localhost:3232
+export DS__ISSUER__DKMS_WATCHER_URL=http://localhost:3235
+export DS__ISSUER__DKMS_HOME=./data/dkms
+export DS__ISSUER__REVOCATION_DB=./data/revocations.db
 poetry run uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-The first boot creates a new issuer AID at `./dev-keystore/`; subsequent boots reopen it. The AID is logged + exposed by `GET /health-check/`.
+The first boot creates a new issuer AID under `./data/dkms/`; later boots read it back. The AID is logged + exposed by `GET /health-check/`.
 
 ## Deployment
 
@@ -62,10 +67,8 @@ image:
 
 issuer:
   name: hus-issuer
-  witnessUrls:
-    - http://ds-dkms-witness-1:3232
-  witnessOobis:
-    - "https://dkms-witness-1.hus.nextgen.hiro-develop.nl/oobi/<witness-AID>"
+  dkmsWitnessUrl: http://ds-dkms-witness:3232
+  dkmsWatcherUrl: http://ds-dkms-watcher:3235
   mesagkestoUrl: http://ds-dkms-mesagkesto:8081
 
 auth:
